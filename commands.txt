@@ -1,0 +1,7 @@
+
+### Ping
+
+```
+H->D: CMD_PING
+D->H: b"Pong!"
+```

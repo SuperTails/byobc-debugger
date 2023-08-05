@@ -1,0 +1,5 @@
+need to use
+
+pio run -t fuses -e fuses_bootloader --upload-port COM11
+
+to set the fuses on first flash
