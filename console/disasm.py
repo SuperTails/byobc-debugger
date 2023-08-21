@@ -82,7 +82,7 @@ def get_modes(inst: int):
         # Group 1 instructions
 
         opcode = ['ORA', 'AND', 'EOR', 'ADC', 'STA', 'LDA', 'CMP', 'SBC'][aaa]
-        mode = ['zpg,X', 'zpg', '#', 'abs', 'zpg,Y', 'zpg,X', 'abs,Y', 'abs,X'][bbb]
+        mode = ['ind,X', 'zpg', '#', 'abs', 'ind,Y', 'zpg,X', 'abs,Y', 'abs,X'][bbb]
 
         if opcode == 'STA' and mode == '#':
             raise Exception('STA # does not exist')

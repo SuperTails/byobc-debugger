@@ -1,3 +1,4 @@
+import sys
 from serial import Serial
 from dataclasses import dataclass
 from typing import Optional
@@ -5,6 +6,7 @@ from enum import Enum
 import time
 from disasm import AddrMode
 import disasm
+import dasm
 
 def update_crc(crc_accum: int, data: bytes) -> int:
     crc_table = [
@@ -122,7 +124,8 @@ class Debugger:
     
     @classmethod
     def open_default_port(cls):
-        port = Serial('COM5', 115200, timeout=5.0)
+        #port = Serial('COM5', 115200, timeout=5.0)
+        port = Serial('/dev/tty.usbserial-110', 115200, timeout=5.0)
         return cls(port)
 
     def ping(self) -> bytes:
@@ -234,7 +237,6 @@ class Cpu:
     ir: Optional[int]
 
     time: Optional[int]
-
     phase: Optional[Phase]
 
     next_state: Optional['Cpu']
@@ -356,15 +358,24 @@ class Cpu:
                 case 'zpg':
                     self.next_state.phase = Phase.Execute
                     self.next_state.time = 0
-                case '#':
-                    raise Exception('immediate does not have a load phase')
-                case 'abs':
+                case 'ind,X' | 'abs,X' | 'abs,Y':
+                    if self.time == 3:
+                        self.next_state.phase = Phase.Execute
+                        self.next_state.time = 0
+                case 'ind,Y':
+                    # TODO: Needs to check for page boundary crossing
+                    pass
+                case '#' | 'impl':
+                    raise Exception('immediate or implied mode does not have a load phase')
+                case 'zpg,X' | 'zpg,Y' | 'abs':
                     if self.time == 1:
                         self.next_state.phase = Phase.Execute
                         self.next_state.time = 0
         
         elif self.phase == Phase.Execute:
             self.next_state.phase = Phase.Execute
+
+            data = state.data
 
             c = self.opcode()
             match c:
@@ -396,6 +407,47 @@ class Cpu:
                     if self.y is not None:
                         self.y = (self.y + 1) & 0xFF
                     self.update_flags_nz(self.y)
+                case 'ADC':
+                    # TODO:
+                    self.a = None
+                    self.unknown_flags()
+                case 'AND':
+                    if self.a is not None:
+                        self.a &= data
+                    self.update_flags_nz(self.a)
+                case 'BIT':
+                    # TODO:
+                    self.unknown_flags()
+                case 'CMP':
+                    # TODO:
+                    self.unknown_flags()
+                case 'CPX':
+                    # TODO:
+                    self.unknown_flags()
+                case 'CPY':
+                    # TODO:
+                    self.unknown_flags()
+                case 'EOR':
+                    if self.a is not None:
+                        self.a ^= data
+                    self.update_flags_nz(self.a)
+                case 'LDA':
+                    self.a = data
+                    self.update_flags_nz(self.a)
+                case 'LDX':
+                    self.x = data
+                    self.update_flags_nz(self.x)
+                case 'LDY':
+                    self.y = data
+                    self.update_flags_nz(self.y)
+                case 'ORA':
+                    if self.a is not None:
+                        self.a |= data
+                    self.update_flags_nz(self.a)
+                case 'SBC':
+                    # TODO:
+                    self.a = None
+                    self.unknown_flags()
 
 
     def display(self):
@@ -423,6 +475,7 @@ class Cpu:
         else:
             result += '??'
         
+        '''
         result += '  IR: '
         if self.ir is not None:
             result += f'{self.ir:02X}'
@@ -433,36 +486,111 @@ class Cpu:
             result += '??'
         
         result += f' {self.phase} {self.time} {self.next_state.phase}'
+        '''
 
         return result
 
 def main():
+    if len(sys.argv) > 3:
+        print('Too many arguments')
+        print('Usage: debugger.py [asm listing file] [asm symbol table]')
+        sys.exit(1)
+    if len(sys.argv) == 2:
+        print('Must provide both listing file and symbol table (or neither)')
+        print('Usage: debugger.py [asm listing file] [asm symbol table]')
+        sys.exit(1)
+    
+    if len(sys.argv) == 3:
+        lst_file_path = sys.argv[1]
+        with open(lst_file_path, 'r') as f:
+            lst_data = f.read()
+        listing = dasm.Listing(lst_data)
+
+        sym_file_path = sys.argv[2]
+        with open(sym_file_path, 'r') as f:
+            sym_data = f.read()
+        symbol_table = dasm.SymbolTable(sym_data)
+
+        print(f'Loaded debug info for file {listing.file_name}')
+    else:
+        listing = None
+        symbol_table = None
+
     dbg = Debugger.open_default_port()
-    print(dbg.ping())
+    dbg.ping()
+
+    free_running = True
 
     while True:
-        state = dbg.get_bus_state()
-        print(dbg.cpu.display())
-        print(f'ADDR: {state.addr:04X}')
-        print(f'DATA:   {state.data:02X}')
-        print(f'STATUS: {state.sync} (lots of pins)')
+        if free_running:
+            print('(free running, stop to see bus info)')
+        else:
+            state = dbg.get_bus_state()
+            if dbg.cpu.pc is not None and listing is not None:
+                for line in listing.neighborhood(dbg.cpu.pc):
+                    print(f'${line.address:04X} {line.line_number:6}: ', end='')
+                    if dbg.cpu.pc == line.address:
+                        print(' -> ', end='')
+                    else:
+                        print('    ', end='')
+                    print(line.source)
+
+            print()
+            print(dbg.cpu.display())
+            print(f'ADDR: {state.addr:04X}')
+            print(f'DATA:   {state.data:02X}')
+            print(f'STATUS: ', end='')
+            print('SYNC' if state.sync else '    ', end='')
+            print()
 
         cmd = input('> ')
 
-        if cmd in ('s', 'step'):
-            dbg.step()
-        elif cmd in ('h', 'stephalf'):
-            dbg.step_half_cycle()
-        elif cmd in ('y', 'stepcycle'):
-            dbg.step_cycle()
-        elif cmd in ('c', 'continue'):
-            dbg.cont()
-        elif cmd in ('q'):
-            break
-        elif cmd in ('r'):
-            dbg.reset_cpu()
-        else:
-            print(f'Unknown command {repr(cmd)}')
+        cmd, *args = cmd.split()
+
+        try:
+            if cmd in ('s', 'step'):
+                free_running = False
+                dbg.step()
+            elif cmd in ('h', 'stephalf'):
+                free_running = False
+                dbg.step_half_cycle()
+            elif cmd in ('y', 'stepcycle'):
+                free_running = False
+                dbg.step_cycle()
+            elif cmd in ('c', 'continue'):
+                free_running = True
+                dbg.cont()
+            elif cmd in ('q'):
+                break
+            elif cmd in ('r'):
+                dbg.reset_cpu()
+            elif cmd in ('b', 'break'):
+                if len(args) > 1:
+                    print('Too many arguments')
+                elif len(args) == 0:
+                    print('Must specify a line number, symbol, or address to set a breakpoint at')
+                else:
+                    loc = args[0]
+                    if loc.startswith('$'):
+                        addr = int(loc[1:], base=16)
+                        dbg.set_breakpoint(addr)
+                    elif listing is not None:
+                        assert(symbol_table is not None)
+                        if loc in symbol_table.symbols:
+                            addr = symbol_table.symbols[loc]
+                        else:
+                            line_number = int(loc)
+                            addr = listing.line_to_addr(line_number)
+                        if addr is not None:
+                            dbg.set_breakpoint(addr)
+                        else:
+                            print('No such line or symbol in file')
+                    else:
+                        print('Cannot set breakpoint on line without source info (provide a listing file)')
+            else:
+                print(f'Unknown command {repr(cmd)}')
+        except ValueError as e:
+            print(f'Error while executing command: {e}')
     
     print('Debugger exited')
 

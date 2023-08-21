@@ -1,3 +1,5 @@
+	PROCESSOR 65C02
+
 DIGIT_BUF = $40
 
 IO_DRB  = $6000
@@ -5,7 +7,7 @@ IO_DRA  = $6001
 IO_DDRB = $6002
 IO_DDRA = $6003
 
-	.org $8000
+	ORG $8000
 
 start:
 	ldx #$FF
@@ -42,24 +44,24 @@ print_bcd:
 
 	lda DIGIT_BUF+3
 	clc
-	adc #'0'
+	adc #'0
 	sta IO_DRB
 	sty IO_DRA
 	stx IO_DRA
 
 	lda DIGIT_BUF+2
-	adc #'0'
+	adc #'0
 	sta IO_DRB
 	sty IO_DRA
 	stx IO_DRA
 
 	lda DIGIT_BUF+1
-	adc #'0'
+	adc #'0
 	sta IO_DRB
 	sty IO_DRA
 	stx IO_DRA
 
-	lda #' '
+	lda #' 
 	sta IO_DRB
 	sty IO_DRA
 	stx IO_DRA
@@ -84,10 +86,10 @@ print_hex:
 	lsr
 	cmp #$0A
 	bpl .hex1
-	adc #('0' - 'A' + $0A)
+	adc #('0 - 'A + $0A)
 .hex1:
 	clc
-	adc #('A' - $0A)
+	adc #('A - $0A)
 	sta IO_DRB
 	sty IO_DRA
 	stx IO_DRA
@@ -96,10 +98,10 @@ print_hex:
 	and #$0F
 	cmp #$0A
 	bpl .hex2
-	adc #('0' - 'A' + $0A)
+	adc #('0 - 'A + $0A)
 .hex2:
 	clc
-	adc #('A' - $0A)
+	adc #('A - $0A)
 	sta IO_DRB
 	sty IO_DRA
 	stx IO_DRA
@@ -144,8 +146,8 @@ do_thing:
 	stx IO_DRA
 	rts
 	
-	.org $FFFA
+	ORG $FFFA
 reset_vectors:
-	.word 0x8000	; NMI
-	.word start		; RESET
-	.word 0x8000	; IRQ
+	DC.W 0x8000	; NMI
+	DC.W start	; RESET
+	DC.W 0x8000	; IRQ
