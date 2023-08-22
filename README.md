@@ -1,6 +1,7 @@
 # 98-341 Build Your Own Breadboard Computer - Debugger
 
-TODO: Introduction here
+This repository contains the scripts necessary to use the W65C02 debugger for 98-341.
+Clone this to a convenient place, as it will be necessary for doing nearly anything with the computer.
 
 ## 1. Running the Debugger
 
@@ -33,7 +34,7 @@ Once you know the port for your debugger, just run `debugger.py` to start debugg
 $ python3 ./console/debugger.py --port=path/to/port/goes/here
 ```
 
-TODO: Actually explain how to use the debugger
+The commands that can be used for the debugger are in section 3.
 
 ## 2. Deploying Code
 
@@ -62,8 +63,8 @@ There is ABSOLUTELY NO WARRANTY, to the extent permitted by law.
 ```
 
 Note that if you'd like to use some of the extra opcodes added by the W65C02,
-you will have to build DASM from source instead.
-If you don't know what that means, or are not interested, disregard this paragraph.
+you will have to build DASM from source instead. This is completely optional,
+but some of the new instructions can be useful.
 
 ### 2.2 Building and Deploying
 
