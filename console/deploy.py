@@ -5,13 +5,35 @@ import dasm
 import copy
 
 def main():
-    if len(sys.argv) != 3:
-        print('Wrong number of arguments')
-        print('Usage: python deploy.py <path to dasm> <path to asm>')
+    port = None
+    dasm_path = None
+
+    argv = copy.copy(sys.argv)
+    i = 0
+    while i < len(argv):
+        if argv[i].startswith('--port='):
+            port = argv[i].removeprefix('--port=')
+            del argv[i]
+        elif argv[i].startswith('--dasm='):
+            dasm_path = argv[i].removeprefix('--dasm=')
+            del argv[i]
+        else:
+            i += 1
+    
+    if port is None:
+        print('Must specify a port for the debugger using --port=<port>')
+        sys.exit(1)
+    
+    if dasm_path is None:
+        print('Must specify location of the DASM executable using --dasm=<path>')
         sys.exit(1)
 
-    dasm_path = sys.argv[1]
-    input_path = sys.argv[2]
+    if len(argv) != 2:
+        print('Wrong number of arguments')
+        print('Usage: python deploy.py [options] <path to asm>')
+        sys.exit(1)
+
+    input_path = argv[1]
 
     output_dir = './'
 
@@ -23,8 +45,8 @@ def main():
 
     print('Connecting to debugger')
 
-    dbg = debugger.Debugger.open_default_port()
-    dbg.ping()
+    dbg = debugger.Debugger.open(port)
+    print(dbg.ping())
 
     print('Flashing EEPROM')
     total_pages = sum((len(c.data) + 0x7F) // 0x80 for c in output.chunks)
@@ -57,6 +79,7 @@ def main():
     print('Resetting CPU')
 
     dbg.reset_cpu()
+    dbg.cont()
 
     print('Done!')
 

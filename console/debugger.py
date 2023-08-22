@@ -128,9 +128,8 @@ class PortWrapper:
         result = b''
 
         start_time = time.monotonic()
-        while time.monotonic() - start_time < self.timeout and count != 0:
+        while time.monotonic() - start_time < self.timeout and len(result) != count:
             result += self.read_nonblocking(count)
-            count -= len(result)
 
         return result
     
@@ -292,6 +291,9 @@ def are_different_or_none(lhs, rhs):
         return False
     return lhs != rhs
 
+def byte_to_signed(b: int):
+    return int.from_bytes(b.to_bytes(1), 'little', signed=True)
+
 @dataclass
 class Cpu:
     pc: Optional[int]
@@ -300,7 +302,9 @@ class Cpu:
     x: Optional[int]
     y: Optional[int]
     s: Optional[int]
-    p: Optional[int]
+
+    p: int
+    p_mask: int
 
     ir: int
     time: int
@@ -323,6 +327,7 @@ class Cpu:
         next_state.y = self.y
         next_state.s = self.s
         next_state.p = self.p
+        next_state.p_mask = self.p_mask
 
         next_state.ir = data
         next_state.time = 0
@@ -343,6 +348,7 @@ class Cpu:
         next_state.y = self.y
         next_state.s = self.s
         next_state.p = self.p
+        next_state.p_mask = self.p_mask
 
         next_state.ir = self.ir
         next_state.time = self.time + 1
@@ -423,6 +429,109 @@ class Cpu:
         
         return next_state
     
+    def do_execute(self, addr: int, data: int):
+        assert(self.cycle_known)
+
+        next_state = Cpu(nested=False)
+
+        next_state.a = self.a
+        next_state.x = self.x
+        next_state.y = self.y
+        next_state.s = self.s
+        next_state.p = self.p
+        next_state.p_mask = self.p_mask
+
+        next_state.ir = self.ir
+        next_state.time = 0
+        next_state.phase = Phase.Execute
+        next_state.cycle_known = True
+
+        c = self.opcode()
+        match c:
+            case 'TXS':
+                next_state.s = self.x
+                next_state.phase = Phase.Fetch
+            case 'TAX':
+                next_state.x = self.a
+                next_state.phase = Phase.Fetch
+            case 'TXA':
+                next_state.a = self.x
+                next_state.phase = Phase.Fetch
+            case 'TAY':
+                next_state.y = self.a
+                next_state.phase = Phase.Fetch
+            case 'TYA':
+                next_state.a = self.y
+                next_state.phase = Phase.Fetch
+            case 'NOP':
+                next_state.phase = Phase.Fetch
+            case 'DEX':
+                next_state.x = ((self.x - 1) & 0xFF) if self.x is not None else None
+                next_state.update_flags_nz(next_state.x)
+                next_state.phase = Phase.Fetch
+            case 'INX':
+                next_state.x = ((self.x + 1) & 0xFF) if self.x is not None else None
+                next_state.update_flags_nz(next_state.x)
+                next_state.phase = Phase.Fetch
+            case 'DEY':
+                next_state.y = ((self.y - 1) & 0xFF) if self.y is not None else None
+                next_state.update_flags_nz(next_state.y)
+                next_state.phase = Phase.Fetch
+            case 'INY':
+                next_state.y = ((self.y + 1) & 0xFF) if self.y is not None else None
+                next_state.update_flags_nz(next_state.y)
+                next_state.phase = Phase.Fetch
+            case 'ADC':
+                if self.a is not None and (self.p_mask & 0b0000_0001) != 0:
+                    c = self.p & 0x1
+                    a = (self.a + data + c)
+                    next_state.a = a & 0xFF
+                    next_state.update_flag_v((self.a ^ a) & (data ^ a) & 0x80 != 0)
+                    next_state.update_flag_c(a & 0x100 != 0)
+                    next_state.update_flags_nz(next_state.a)
+                else:
+                    next_state.a = None
+                    next_state.unknown_flags()
+            case 'AND':
+                next_state.a = (self.a & data) if self.a is not None else None
+                next_state.update_flags_nz(next_state.a)
+            case 'BIT':
+                # TODO:
+                self.unknown_flags()
+            case 'CMP':
+                # TODO:
+                self.unknown_flags()
+            case 'CPX':
+                # TODO:
+                self.unknown_flags()
+            case 'CPY':
+                # TODO:
+                self.unknown_flags()
+            case 'EOR':
+                next_state.a = (self.a ^ data) if self.a is not None else None
+                next_state.update_flags_nz(next_state.a)
+            case 'LDA':
+                next_state.a = data
+                next_state.update_flags_nz(next_state.a)
+                next_state.phase = Phase.Fetch
+            case 'LDX':
+                next_state.x = data
+                next_state.update_flags_nz(next_state.x)
+                next_state.phase = Phase.Fetch
+            case 'LDY':
+                next_state.y = data
+                next_state.update_flags_nz(next_state.y)
+                next_state.phase = Phase.Fetch
+            case 'ORA':
+                next_state.a = (self.a | data) if self.a is not None else None
+                next_state.update_flags_nz(next_state.a)
+            case 'SBC':
+                # TODO:
+                self.a = None
+                self.unknown_flags()
+        
+        return next_state
+    
     def pc_plus(self, value: int):
         if self.pc is not None:
             return (self.pc + value) & 0xFFFF
@@ -462,7 +571,8 @@ class Cpu:
         self.x = None
         self.y = None
         self.s = None
-        self.p = None
+        self.p = 0
+        self.p_mask = 0
         self.ir = 0
         self.time = 0
         self.phase = Phase.Fetch
@@ -532,17 +642,31 @@ class Cpu:
         _, m = disasm.get_modes(self.ir)
         return m
     
+    def update_flag_c(self, c):
+        self.p_mask |= 0b0000_0001
+        self.p &= ~0b0000_0001
+        if c:
+            self.p |= 0b0000_0001
+    
+    def update_flag_v(self, v):
+        self.p_mask |= 0b0100_0000
+        self.p &= ~0b0100_0000
+        if v:
+            self.p |= 0b0100_0000
+    
     def update_flags_nz(self, value: Optional[int]):
-        # TODO:
         if value is not None:
-            # TODO:
-            pass
+            n = byte_to_signed(value) < 0
+            z = value == 0
+            self.p_mask |= 0b1000_0010
+            self.p &= ~0b1000_0010
+            self.p |= (+n) << 7
+            self.p |= (+z) << 1
         else:
-            self.unknown_flags()
+            self.p_mask &= ~0b1000_0010
 
     def unknown_flags(self):
-        # TODO:
-        pass
+        self.p_mask = 0b0000_0000
 
     def update(self, state: BusState):
         assert(self.next_state is not None)
@@ -556,84 +680,8 @@ class Cpu:
             self.next_state = self.do_fetch(state.addr, state.data)
         elif self.phase == Phase.Load:
             self.next_state = self.do_load()
-        
         elif self.phase == Phase.Execute:
-            self.next_state.phase = Phase.Execute
-
-            data = state.data
-
-            c = self.opcode()
-            match c:
-                case 'TXS':
-                    self.s = self.x
-                case 'TAX':
-                    self.x = self.a
-                case 'TXA':
-                    self.a = self.x
-                case 'TAY':
-                    self.y = self.a
-                case 'TYA':
-                    self.a = self.y
-                case 'NOP':
-                    pass
-                case 'DEX':
-                    if self.x is not None:
-                        self.x = (self.x - 1) & 0xFF
-                    self.update_flags_nz(self.x)
-                case 'INX':
-                    if self.x is not None:
-                        self.x = (self.x + 1) & 0xFF
-                    self.update_flags_nz(self.x)
-                case 'DEY':
-                    if self.y is not None:
-                        self.y = (self.y - 1) & 0xFF
-                    self.update_flags_nz(self.y)
-                case 'INY':
-                    if self.y is not None:
-                        self.y = (self.y + 1) & 0xFF
-                    self.update_flags_nz(self.y)
-                case 'ADC':
-                    # TODO:
-                    self.a = None
-                    self.unknown_flags()
-                case 'AND':
-                    if self.a is not None:
-                        self.a &= data
-                    self.update_flags_nz(self.a)
-                case 'BIT':
-                    # TODO:
-                    self.unknown_flags()
-                case 'CMP':
-                    # TODO:
-                    self.unknown_flags()
-                case 'CPX':
-                    # TODO:
-                    self.unknown_flags()
-                case 'CPY':
-                    # TODO:
-                    self.unknown_flags()
-                case 'EOR':
-                    if self.a is not None:
-                        self.a ^= data
-                    self.update_flags_nz(self.a)
-                case 'LDA':
-                    self.a = data
-                    self.update_flags_nz(self.a)
-                case 'LDX':
-                    self.x = data
-                    self.update_flags_nz(self.x)
-                case 'LDY':
-                    self.y = data
-                    self.update_flags_nz(self.y)
-                case 'ORA':
-                    if self.a is not None:
-                        self.a |= data
-                    self.update_flags_nz(self.a)
-                case 'SBC':
-                    # TODO:
-                    self.a = None
-                    self.unknown_flags()
-
+            self.next_state = self.do_execute(state.addr, state.data)
 
     def display(self):
         result = 'PC: '
@@ -781,7 +829,7 @@ def main():
                 dbg.cont()
             elif cmd in ('q'):
                 break
-            elif cmd in ('r'):
+            elif cmd in ('r', 'reset'):
                 dbg.reset_cpu()
             elif cmd in ('b', 'break'):
                 if len(args) > 1:
