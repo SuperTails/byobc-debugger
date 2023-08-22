@@ -7,6 +7,7 @@ import time
 from disasm import AddrMode
 import disasm
 import dasm
+import copy
 
 def update_crc(crc_accum: int, data: bytes) -> int:
     crc_table = [
@@ -61,6 +62,8 @@ CMD_STEP = b'\x07'
 CMD_STEP_CYCLE = b'\x08'
 CMD_STEP_HALF_CYCLE = b'\x09'
 CMD_CONTINUE = b'\x0A'
+CMD_HIT_BREAKPOINT = b'\x0B'
+CMD_PRINT_INFO = b'\x0C'
 
 @dataclass
 class BusState:
@@ -109,29 +112,77 @@ class BusState:
 class InvalidHeader(Exception):
     pass
 
-class Debugger:
-    def __init__(self, port):
+class PortWrapper:
+    def __init__(self, port: Serial, timeout: float):
         self.port = port
+        self.timeout = timeout
+
+        assert(self.port.timeout == 0.0)
+
+    def read_nonblocking(self, count: int):
+        return self.port.read(count)
+    
+    def read(self, count: int):
+        assert(count >= 0)
+
+        result = b''
+
+        start_time = time.monotonic()
+        while time.monotonic() - start_time < self.timeout and count != 0:
+            result += self.read_nonblocking(count)
+            count -= len(result)
+
+        return result
+    
+    def read_exact(self, count: int):
+        result = self.read(count)
+        if len(result) != count:
+            raise TimeoutError
+        return result
+    
+    def write(self, data: bytes):
+        self.port.write(data)
+
+@dataclass
+class VersionInfo:
+    year: int
+    month: int
+    day: int
+
+    def __str__(self):
+        return f'{self.year:04}-{self.month:02}-{self.day:02}'
+
+class Debugger:
+    def __init__(self, port, timeout):
+        self.port = PortWrapper(port, timeout)
         self.cpu = Cpu()
         self.cpu.next_state = Cpu()
     
     def start_command(self, b: bytes):
         assert(len(b) == 1)
         self.port.write(b)
-        echo = self.port.read(1)
+        echo = self.port.read_exact(1)
         if echo != b:
             raise InvalidHeader(f'expected {b} but found {echo}')
     
     @classmethod
-    def open_default_port(cls):
-        #port = Serial('COM5', 115200, timeout=5.0)
-        port = Serial('/dev/tty.usbserial-110', 115200, timeout=5.0)
-        return cls(port)
+    def open(cls, path):
+        port = Serial(path, 115200, timeout=0.0)
+        return cls(port, 5.0)
 
     def ping(self) -> bytes:
         self.start_command(CMD_PING)
-        data = self.port.read(5)
+        data = self.port.read_exact(5)
         return data
+    
+    def print_info(self) -> VersionInfo:
+        self.start_command(CMD_PRINT_INFO)
+
+        data = self.port.read_exact(4)
+        year  = int.from_bytes(data[0:2], 'little')
+        month = int.from_bytes(data[2:3], 'little')
+        day   = int.from_bytes(data[3:4], 'little')
+        return VersionInfo(year, month, day)
 
     def page_write(self, page: int, data: bytes):
         self._raw_page_write(page, data)
@@ -154,7 +205,7 @@ class Debugger:
 
         self.port.write(data)
 
-        confirm = self.port.read(1)
+        confirm = self.port.read_exact(1)
         if confirm != b'\x00':
             raise Exception(confirm)
     
@@ -166,7 +217,7 @@ class Debugger:
         cmd = addr.to_bytes(2, 'little') + len_bytes.to_bytes(2, 'little')
         self.port.write(cmd)
 
-        data = self.port.read(len_bytes)
+        data = self.port.read_exact(len_bytes)
         assert(len(data) == len_bytes)
         return data
     
@@ -176,7 +227,7 @@ class Debugger:
         self.start_command(CMD_SET_BREAKPOINT)
 
         self.port.write(addr.to_bytes(2, 'little'))
-        ok = self.port.read(1)
+        ok = self.port.read_exact(1)
         if ok == b'\xFF':
             raise Exception('Too many breakpoints')
         print(f'Set breakpoint {ok} at address ${addr:04X}')
@@ -188,13 +239,21 @@ class Debugger:
     def get_bus_state(self) -> BusState:
         self.start_command(CMD_GET_BUS_STATE)
 
-        state = self.port.read(6)
+        state = self.port.read_exact(6)
         return BusState.from_bytes(state)
+    
+    def poll_breakpoint(self):
+        if self.port.read_nonblocking(1) == CMD_HIT_BREAKPOINT:
+            which = self.port.read_exact(1)
+            return which[0]
+        else:
+            return None
     
     def step(self):
         while True:
             self.start_command(CMD_STEP_CYCLE)
             state = self.get_bus_state()
+            print(state)
             self.cpu.update(state)
             if state.sync:
                 break
@@ -226,6 +285,13 @@ class Phase(Enum):
     Load = 1
     Execute = 2
 
+def are_different_or_none(lhs, rhs):
+    if lhs is None:
+        return False
+    if rhs is None:
+        return False
+    return lhs != rhs
+
 @dataclass
 class Cpu:
     pc: Optional[int]
@@ -233,28 +299,174 @@ class Cpu:
     a: Optional[int]
     x: Optional[int]
     y: Optional[int]
+    s: Optional[int]
+    p: Optional[int]
 
-    ir: Optional[int]
+    ir: int
+    time: int
+    phase: Phase
 
-    time: Optional[int]
-    phase: Optional[Phase]
+    cycle_known: bool
 
     next_state: Optional['Cpu']
 
-    sp: Optional[int]
-
     def __init__(self, nested=True):
         self.reset(nested)
+    
+    def do_fetch(self, addr: int, data: int):
+        next_state = Cpu(nested=False)
 
+        next_state.pc = (addr + 1) & 0xFFFF
+
+        next_state.a = self.a
+        next_state.x = self.x
+        next_state.y = self.y
+        next_state.s = self.s
+        next_state.p = self.p
+
+        next_state.ir = data
+        next_state.time = 0
+        next_state.phase = Phase.Load
+        if next_state.addr_mode in ('#', 'impl'):
+            next_state.phase = Phase.Execute
+        next_state.cycle_known = True
+
+        return next_state
+    
+    def do_load(self):
+        assert(self.cycle_known)
+
+        next_state = Cpu(nested=False)
+
+        next_state.a = self.a
+        next_state.x = self.x
+        next_state.y = self.y
+        next_state.s = self.s
+        next_state.p = self.p
+
+        next_state.ir = self.ir
+        next_state.time = self.time + 1
+        next_state.phase = Phase.Execute
+        next_state.cycle_known = True
+
+        done = False
+
+        STORE_OR_RMW = (
+            'STA', 'STX', 'STY',
+            'ASL', 'DEC', 'INC', 'LSR', 'ROL', 'ROR',
+        )
+
+        op = self.opcode()
+        am = self.addr_mode()
+        match am:
+            case 'zpg':
+                if self.time == 0:
+                    done = True
+                    next_state.pc = self.pc_plus(1)
+            case 'abs':
+                if self.time == 1:
+                    done = True
+                    next_state.pc = self.pc_plus(2)
+            case 'ind,X':
+                if self.time == 0:
+                    # Access base zpg address BAL
+                    pass
+                elif self.time == 2:
+                    # Access ADL at BAL + X
+                    pass
+                elif self.time == 3:
+                    # Access ADH at BAL + X (+ 1)
+                    done = True
+                    next_state.pc = self.pc_plus(1)
+            case 'abs,X' | 'abs,Y':
+
+                if self.time == 0:
+                    # Access BAL
+                    pass
+                elif self.time == 1 and self.opcode not in STORE_OR_RMW:
+                    # Access BAH
+                    print('TODO: ABS,X OR ABS,Y ADDRESSING MODE COULD END HERE')
+                elif self.time == 2:
+                    # Compute carry
+                    done = True
+                    next_state.pc = self.pc_plus(2)
+            case 'ind,Y':
+                if self.time == 0:
+                    # Read IAL
+                    pass
+                elif self.time == 1:
+                    # Access BAL, at IAL
+                    pass
+                elif self.time == 2 and self.opcode not in STORE_OR_RMW:
+                    # Access BAH, at IAL + 1
+                    print('TODO: IND,Y ADDRESSING MODE COULD END HERE')
+                elif self.time == 3:
+                    # Compute carry
+                    done = True
+                    next_state.pc = self.pc_plus(1)
+            case 'zpg,X' | 'zpg,Y':
+                if self.time == 0:
+                    # Read BAL
+                    pass
+                elif self.time == 1:
+                    # Access BAL (discarded) 
+                    done = True
+                    next_state.pc = self.pc_plus(1)
+            case '#' | 'impl':
+                raise Exception('immediate or implied mode does not have a load phase')
+            case _:
+                print(f'unknown addressing mode {am}')
+    
+        if done:
+            next_state.phase = Phase.Execute
+            next_state.time = 0
+        
+        return next_state
+    
+    def pc_plus(self, value: int):
+        if self.pc is not None:
+            return (self.pc + value) & 0xFFFF
+        else:
+            return None
+
+    '''
+    def use_next_state(self):
+        assert(self.next_state is not None)
+        if are_different_or_none(self.pc, self.next_state.pc):
+            print(f'warning: mismatch in PC (expected {self.pc:04X}, actual {self.next_state.pc:04X})')
+        self.pc = self.next_state.pc
+        if are_different_or_none(self.a, self.next_state.a):
+            print(f'warning: mismatch in A (expected {self.a:02X}, actual {})')
+        if self.pc is not None and self.next_state.pc is not None and self.next_state.pc
+    '''
+
+    def use_next_state(self):
+        assert(self.next_state is not None)
+
+        self.pc = self.next_state.pc
+        
+        self.a = self.next_state.a
+        self.x = self.next_state.x
+        self.y = self.next_state.y
+        self.s = self.next_state.s
+        self.p = self.next_state.p
+
+        self.ir = self.next_state.ir
+        self.time = self.next_state.time
+        self.phase = self.next_state.phase
+        self.cycle_known = self.next_state.cycle_known
+    
     def reset(self, nested=True):
         self.pc = None
         self.a = None
         self.x = None
         self.y = None
-        self.ir = None
-        self.time = None
-        self.phase = None
-        self.sp = None
+        self.s = None
+        self.p = None
+        self.ir = 0
+        self.time = 0
+        self.phase = Phase.Fetch
+        self.cycle_known = False
         if nested:
             self.next_state = Cpu(nested=False)
     
@@ -303,12 +515,20 @@ class Cpu:
     def opcode(self):
         if self.ir is None:
             return None
+        m = disasm.get_modes(self.ir)
+        if m is None:
+            return None
+
         c, _ = disasm.get_modes(self.ir)
         return c
     
     def addr_mode(self):
         if self.ir is None:
             return None
+        m = disasm.get_modes(self.ir)
+        if m is None:
+            return None
+
         _, m = disasm.get_modes(self.ir)
         return m
     
@@ -326,51 +546,16 @@ class Cpu:
 
     def update(self, state: BusState):
         assert(self.next_state is not None)
-
-        self.pc = self.next_state.pc
-        self.ir = self.next_state.ir
-        self.time = self.next_state.time
-        self.phase = self.next_state.phase
-        self.time = self.next_state.time
+        self.use_next_state()
 
         if state.sync:
             self.phase = Phase.Fetch
-
         self.apply_constraints(state)
         
         if self.phase == Phase.Fetch:
-            assert(self.pc is not None)
-
-            self.next_state.pc = self.pc + 1
-            self.next_state.ir = state.data
-            self.next_state.phase = Phase.Load
-            self.next_state.time = 0
-
-            pair = disasm.get_modes(state.data)
-            if pair is not None and pair[1] in ('#', 'impl'):
-                self.next_state.phase = Phase.Execute
-
+            self.next_state = self.do_fetch(state.addr, state.data)
         elif self.phase == Phase.Load:
-            self.next_state.time = self.time + 1
-
-            am = self.addr_mode()
-            match am:
-                case 'zpg':
-                    self.next_state.phase = Phase.Execute
-                    self.next_state.time = 0
-                case 'ind,X' | 'abs,X' | 'abs,Y':
-                    if self.time == 3:
-                        self.next_state.phase = Phase.Execute
-                        self.next_state.time = 0
-                case 'ind,Y':
-                    # TODO: Needs to check for page boundary crossing
-                    pass
-                case '#' | 'impl':
-                    raise Exception('immediate or implied mode does not have a load phase')
-                case 'zpg,X' | 'zpg,Y' | 'abs':
-                    if self.time == 1:
-                        self.next_state.phase = Phase.Execute
-                        self.next_state.time = 0
+            self.next_state = self.do_load()
         
         elif self.phase == Phase.Execute:
             self.next_state.phase = Phase.Execute
@@ -380,7 +565,7 @@ class Cpu:
             c = self.opcode()
             match c:
                 case 'TXS':
-                    self.sp = self.x
+                    self.s = self.x
                 case 'TAX':
                     self.x = self.a
                 case 'TXA':
@@ -491,22 +676,37 @@ class Cpu:
         return result
 
 def main():
-    if len(sys.argv) > 3:
-        print('Too many arguments')
-        print('Usage: debugger.py [asm listing file] [asm symbol table]')
+    port = None
+
+    argv = copy.copy(sys.argv)
+    i = 0
+    while i < len(argv):
+        if argv[i].startswith('--port='):
+            port = argv[i].removeprefix('--port=')
+            del argv[i]
+        else:
+            i += 1
+    
+    if port is None:
+        print('Must specify a port for the debugger using --port=<port>')
         sys.exit(1)
-    if len(sys.argv) == 2:
+
+    if len(argv) > 3:
+        print('Too many arguments')
+        print('Usage: debugger.py [options] [asm listing file] [asm symbol table]')
+        sys.exit(1)
+    if len(argv) == 2:
         print('Must provide both listing file and symbol table (or neither)')
-        print('Usage: debugger.py [asm listing file] [asm symbol table]')
+        print('Usage: debugger.py [options] [asm listing file] [asm symbol table]')
         sys.exit(1)
     
-    if len(sys.argv) == 3:
-        lst_file_path = sys.argv[1]
+    if len(argv) == 3:
+        lst_file_path = argv[1]
         with open(lst_file_path, 'r') as f:
             lst_data = f.read()
         listing = dasm.Listing(lst_data)
 
-        sym_file_path = sys.argv[2]
+        sym_file_path = argv[2]
         with open(sym_file_path, 'r') as f:
             sym_data = f.read()
         symbol_table = dasm.SymbolTable(sym_data)
@@ -516,32 +716,51 @@ def main():
         listing = None
         symbol_table = None
 
-    dbg = Debugger.open_default_port()
-    dbg.ping()
+    dbg = Debugger.open(port)
 
-    free_running = True
+    info = dbg.print_info()
+    print('Connected to debugger')
+    print(f'Version: {info}')
 
+    dbg.reset_cpu()
+
+    free_running = False
     while True:
         if free_running:
-            print('(free running, stop to see bus info)')
-        else:
-            state = dbg.get_bus_state()
-            if dbg.cpu.pc is not None and listing is not None:
-                for line in listing.neighborhood(dbg.cpu.pc):
-                    print(f'${line.address:04X} {line.line_number:6}: ', end='')
-                    if dbg.cpu.pc == line.address:
-                        print(' -> ', end='')
-                    else:
-                        print('    ', end='')
-                    print(line.source)
+            try:
+                while True:
+                    which_breakpoint = dbg.poll_breakpoint()
+                    if which_breakpoint is not None:
+                        print(f'Hit breakpoint {which_breakpoint}, stopping')
+                        break
+                    time.sleep(0.1)
+            except KeyboardInterrupt:
+                print('Keyboard interrupt, stopping')
+                dbg.step_half_cycle()
+            
+            free_running = False
 
-            print()
-            print(dbg.cpu.display())
-            print(f'ADDR: {state.addr:04X}')
-            print(f'DATA:   {state.data:02X}')
-            print(f'STATUS: ', end='')
-            print('SYNC' if state.sync else '    ', end='')
-            print()
+        state = dbg.get_bus_state()
+        if dbg.cpu.pc is not None and listing is not None:
+            for line in listing.neighborhood(dbg.cpu.pc):
+                print(f'${line.address:04X} {line.line_number:6}: ', end='')
+                if dbg.cpu.pc == line.address:
+                    print(' -> ', end='')
+                else:
+                    print('    ', end='')
+                print(line.source)
+
+        print()
+        print(dbg.cpu.display())
+        print(f'ADDR: {state.addr:04X}')
+        print(f'DATA:   {state.data:02X}')
+        print(f'STATUS: ', end='')
+        print('SYNC ' if state.sync else '     ', end='')
+        print('     ' if state.resb else 'RESB ', end='')
+        print('     ' if state.vpb  else 'VPB  ', end='')
+        print('   |   ', end='')
+        print(f'PHI2: {+state.phi2}')
+        print()
 
         cmd = input('> ')
 

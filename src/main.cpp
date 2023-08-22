@@ -4,6 +4,7 @@
 #include "uart.h"
 #include "message.h"
 #include "gpio.h"
+#include "version.h"
 
 #include <Arduino.h>
 
@@ -26,8 +27,6 @@ void delay(int amount) {
 void delay_millis(int millis) {
   delay(millis * 12);
 }
-
-int cnt = 0;
 
 // Address and data buses must be in output mode.
 // Page must be aligned to a 128-byte boundary (mask 0xFF80).
@@ -195,6 +194,8 @@ void setup() {
   }
 
   #endif
+
+  RESB_PORT.OUTCLR = RESB_PIN_MASK;
 }
 
 #define MAX_BREAKPOINTS 16
@@ -218,6 +219,15 @@ enum class Action {
   Step,
   Continue,
 };
+
+enum class Wait {
+  None,
+  HalfCycle,
+  Cycle,
+  Sync
+};
+
+static Wait WAIT = Wait::HalfCycle;
 
 Action handle_commands() {
   Command cmd;
@@ -264,7 +274,8 @@ Action handle_commands() {
       ++NUM_BREAKPOINTS;
       break;
     case CommandType::ResetCpu:
-      cnt = 0;
+      RESB_PORT.OUTCLR = RESB_PIN_MASK;
+      WAIT = Wait::HalfCycle;
       break;
     case CommandType::GetBusState: {
       BusState state = {
@@ -289,6 +300,10 @@ Action handle_commands() {
     case CommandType::Continue: {
       return Action::Continue;
     }
+    case CommandType::PrintInfo: {
+      uart::put_bytes(reinterpret_cast<const uint8_t*>(&VERSION), sizeof(VERSION));
+      break;
+    }
     default:
       break;
     }
@@ -297,27 +312,12 @@ Action handle_commands() {
   return Action::None;
 }
 
-enum class Wait {
-  None,
-  HalfCycle,
-  Cycle,
-  Sync
-};
-
-static Wait WAIT = Wait::None;
-
 void loop() {
-
-  if (cnt < 3) {
-    RESB_PORT.OUTCLR = RESB_PIN_MASK;
-    ++cnt;
-  } else {
-    RESB_PORT.OUTSET = RESB_PIN_MASK;
-  }
-
   uint16_t addr;
   uint8_t data;
   status_t status;
+
+  // Interrupt signals (IRQB, NMIB, RESB, RDY) are latched on the falling edge.
 
   gpio::write_phi2(false);
 
@@ -325,10 +325,13 @@ void loop() {
 
   delay(50);
 
+  RESB_PORT.OUTSET = RESB_PIN_MASK;
+
   addr = gpio::read_addr_bus();
   for (int8_t i = 0; i < NUM_BREAKPOINTS; ++i) {
     if (BREAKPOINTS[i].addr == addr) {
       WAIT = Wait::HalfCycle;
+      hit_breakpoint(i);
       break;
     }
   }

@@ -21,6 +21,8 @@ enum class CommandType : uint8_t {
 	StepCycle = 0x8,
 	StepHalfCycle = 0x9,
 	Continue = 0xA,
+	HitBreakpoint = 0xB,
+	PrintInfo = 0xC,
 	MAX_CMD
 };
 
@@ -37,6 +39,10 @@ struct ReadMemoryCmd {
 
 struct SetBreakpointCmd {
 	uint16_t addr;
+};
+
+struct HitBreakpointCmd {
+	uint8_t which;
 };
 
 struct Command {
@@ -56,3 +62,5 @@ struct Command {
 // Returns 0 on success and stores the command data in `cmd`.
 // Returns ERR_NO_CMD if no command has been sent yet.
 int get_command(Command &cmd);
+
+void hit_breakpoint(uint8_t which);

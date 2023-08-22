@@ -22,7 +22,6 @@ class AddrMode(Enum):
     IndY = 'ind,Y'
     'Indirect, Y indexed'
     
-
 def get_modes(inst: int):
     assert(0 <= inst < 256)
 

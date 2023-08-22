@@ -53,10 +53,16 @@ int get_command(Command &cmd) {
 	case CommandType::StepHalfCycle:
 	case CommandType::StepCycle:
 	case CommandType::Continue:
+	case CommandType::PrintInfo:
 		break;
 	case CommandType::MAX_CMD:
 		break;
 	}
 
 	return 0;
+}
+
+void hit_breakpoint(uint8_t which) {
+	uart::put((uint8_t)CommandType::HitBreakpoint);
+	uart::put(which);
 }
