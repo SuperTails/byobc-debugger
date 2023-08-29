@@ -252,7 +252,6 @@ class Debugger:
         while True:
             self.start_command(CMD_STEP_CYCLE)
             state = self.get_bus_state()
-            print(state)
             self.cpu.update(state)
             if state.sync:
                 break
@@ -332,7 +331,7 @@ class Cpu:
         next_state.ir = data
         next_state.time = 0
         next_state.phase = Phase.Load
-        if next_state.addr_mode in ('#', 'impl'):
+        if next_state.addr_mode() in ('#', 'impl'):
             next_state.phase = Phase.Execute
         next_state.cycle_known = True
 
@@ -364,64 +363,62 @@ class Cpu:
 
         op = self.opcode()
         am = self.addr_mode()
-        match am:
-            case 'zpg':
-                if self.time == 0:
-                    done = True
-                    next_state.pc = self.pc_plus(1)
-            case 'abs':
-                if self.time == 1:
-                    done = True
-                    next_state.pc = self.pc_plus(2)
-            case 'ind,X':
-                if self.time == 0:
-                    # Access base zpg address BAL
-                    pass
-                elif self.time == 2:
-                    # Access ADL at BAL + X
-                    pass
-                elif self.time == 3:
-                    # Access ADH at BAL + X (+ 1)
-                    done = True
-                    next_state.pc = self.pc_plus(1)
-            case 'abs,X' | 'abs,Y':
-
-                if self.time == 0:
-                    # Access BAL
-                    pass
-                elif self.time == 1 and self.opcode not in STORE_OR_RMW:
-                    # Access BAH
-                    print('TODO: ABS,X OR ABS,Y ADDRESSING MODE COULD END HERE')
-                elif self.time == 2:
-                    # Compute carry
-                    done = True
-                    next_state.pc = self.pc_plus(2)
-            case 'ind,Y':
-                if self.time == 0:
-                    # Read IAL
-                    pass
-                elif self.time == 1:
-                    # Access BAL, at IAL
-                    pass
-                elif self.time == 2 and self.opcode not in STORE_OR_RMW:
-                    # Access BAH, at IAL + 1
-                    print('TODO: IND,Y ADDRESSING MODE COULD END HERE')
-                elif self.time == 3:
-                    # Compute carry
-                    done = True
-                    next_state.pc = self.pc_plus(1)
-            case 'zpg,X' | 'zpg,Y':
-                if self.time == 0:
-                    # Read BAL
-                    pass
-                elif self.time == 1:
-                    # Access BAL (discarded) 
-                    done = True
-                    next_state.pc = self.pc_plus(1)
-            case '#' | 'impl':
-                raise Exception('immediate or implied mode does not have a load phase')
-            case _:
-                print(f'unknown addressing mode {am}')
+        if am == 'zpg':
+            if self.time == 0:
+                done = True
+                next_state.pc = self.pc_plus(1)
+        elif am == 'abs':
+            if self.time == 1:
+                done = True
+                next_state.pc = self.pc_plus(2)
+        elif am == 'ind,X':
+            if self.time == 0:
+                # Access base zpg address BAL
+                pass
+            elif self.time == 2:
+                # Access ADL at BAL + X
+                pass
+            elif self.time == 3:
+                # Access ADH at BAL + X (+ 1)
+                done = True
+                next_state.pc = self.pc_plus(1)
+        elif am == 'abs,X' or am ==  'abs,Y':
+            if self.time == 0:
+                # Access BAL
+                pass
+            elif self.time == 1 and self.opcode not in STORE_OR_RMW:
+                # Access BAH
+                print('TODO: ABS,X OR ABS,Y ADDRESSING MODE COULD END HERE')
+            elif self.time == 2:
+                # Compute carry
+                done = True
+                next_state.pc = self.pc_plus(2)
+        elif am == 'ind,Y':
+            if self.time == 0:
+                # Read IAL
+                pass
+            elif self.time == 1:
+                # Access BAL, at IAL
+                pass
+            elif self.time == 2 and self.opcode not in STORE_OR_RMW:
+                # Access BAH, at IAL + 1
+                print('TODO: IND,Y ADDRESSING MODE COULD END HERE')
+            elif self.time == 3:
+                # Compute carry
+                done = True
+                next_state.pc = self.pc_plus(1)
+        elif am == 'zpg,X' or am == 'zpg,Y':
+            if self.time == 0:
+                # Read BAL
+                pass
+            elif self.time == 1:
+                # Access BAL (discarded) 
+                done = True
+                next_state.pc = self.pc_plus(1)
+        elif am == '#' or am == 'impl':
+            raise Exception('immediate or implied mode does not have a load phase')
+        else:
+            print(f'unknown addressing mode {am}')
     
         if done:
             next_state.phase = Phase.Execute
@@ -447,88 +444,87 @@ class Cpu:
         next_state.cycle_known = True
 
         c = self.opcode()
-        match c:
-            case 'TXS':
-                next_state.s = self.x
-                next_state.phase = Phase.Fetch
-            case 'TAX':
-                next_state.x = self.a
-                next_state.phase = Phase.Fetch
-            case 'TXA':
-                next_state.a = self.x
-                next_state.phase = Phase.Fetch
-            case 'TAY':
-                next_state.y = self.a
-                next_state.phase = Phase.Fetch
-            case 'TYA':
-                next_state.a = self.y
-                next_state.phase = Phase.Fetch
-            case 'NOP':
-                next_state.phase = Phase.Fetch
-            case 'DEX':
-                next_state.x = ((self.x - 1) & 0xFF) if self.x is not None else None
-                next_state.update_flags_nz(next_state.x)
-                next_state.phase = Phase.Fetch
-            case 'INX':
-                next_state.x = ((self.x + 1) & 0xFF) if self.x is not None else None
-                next_state.update_flags_nz(next_state.x)
-                next_state.phase = Phase.Fetch
-            case 'DEY':
-                next_state.y = ((self.y - 1) & 0xFF) if self.y is not None else None
-                next_state.update_flags_nz(next_state.y)
-                next_state.phase = Phase.Fetch
-            case 'INY':
-                next_state.y = ((self.y + 1) & 0xFF) if self.y is not None else None
-                next_state.update_flags_nz(next_state.y)
-                next_state.phase = Phase.Fetch
-            case 'ADC':
-                if self.a is not None and (self.p_mask & 0b0000_0001) != 0:
-                    c = self.p & 0x1
-                    a = (self.a + data + c)
-                    next_state.a = a & 0xFF
-                    next_state.update_flag_v((self.a ^ a) & (data ^ a) & 0x80 != 0)
-                    next_state.update_flag_c(a & 0x100 != 0)
-                    next_state.update_flags_nz(next_state.a)
-                else:
-                    next_state.a = None
-                    next_state.unknown_flags()
-            case 'AND':
-                next_state.a = (self.a & data) if self.a is not None else None
+        if c == 'TXS':
+            next_state.s = self.x
+            next_state.phase = Phase.Fetch
+        elif c == 'TAX':
+            next_state.x = self.a
+            next_state.phase = Phase.Fetch
+        elif c == 'TXA':
+            next_state.a = self.x
+            next_state.phase = Phase.Fetch
+        elif c == 'TAY':
+            next_state.y = self.a
+            next_state.phase = Phase.Fetch
+        elif c == 'TYA':
+            next_state.a = self.y
+            next_state.phase = Phase.Fetch
+        elif c == 'NOP':
+            next_state.phase = Phase.Fetch
+        elif c == 'DEX':
+            next_state.x = ((self.x - 1) & 0xFF) if self.x is not None else None
+            next_state.update_flags_nz(next_state.x)
+            next_state.phase = Phase.Fetch
+        elif c == 'INX':
+            next_state.x = ((self.x + 1) & 0xFF) if self.x is not None else None
+            next_state.update_flags_nz(next_state.x)
+            next_state.phase = Phase.Fetch
+        elif c == 'DEY':
+            next_state.y = ((self.y - 1) & 0xFF) if self.y is not None else None
+            next_state.update_flags_nz(next_state.y)
+            next_state.phase = Phase.Fetch
+        elif c == 'INY':
+            next_state.y = ((self.y + 1) & 0xFF) if self.y is not None else None
+            next_state.update_flags_nz(next_state.y)
+            next_state.phase = Phase.Fetch
+        elif c == 'ADC':
+            if self.a is not None and (self.p_mask & 0b0000_0001) != 0:
+                c = self.p & 0x1
+                a = (self.a + data + c)
+                next_state.a = a & 0xFF
+                next_state.update_flag_v((self.a ^ a) & (data ^ a) & 0x80 != 0)
+                next_state.update_flag_c(a & 0x100 != 0)
                 next_state.update_flags_nz(next_state.a)
-            case 'BIT':
-                # TODO:
-                self.unknown_flags()
-            case 'CMP':
-                # TODO:
-                self.unknown_flags()
-            case 'CPX':
-                # TODO:
-                self.unknown_flags()
-            case 'CPY':
-                # TODO:
-                self.unknown_flags()
-            case 'EOR':
-                next_state.a = (self.a ^ data) if self.a is not None else None
-                next_state.update_flags_nz(next_state.a)
-            case 'LDA':
-                next_state.a = data
-                next_state.update_flags_nz(next_state.a)
-                next_state.phase = Phase.Fetch
-            case 'LDX':
-                next_state.x = data
-                next_state.update_flags_nz(next_state.x)
-                next_state.phase = Phase.Fetch
-            case 'LDY':
-                next_state.y = data
-                next_state.update_flags_nz(next_state.y)
-                next_state.phase = Phase.Fetch
-            case 'ORA':
-                next_state.a = (self.a | data) if self.a is not None else None
-                next_state.update_flags_nz(next_state.a)
-            case 'SBC':
-                # TODO:
-                self.a = None
-                self.unknown_flags()
+            else:
+                next_state.a = None
+                next_state.unknown_flags()
+        elif c == 'AND':
+            next_state.a = (self.a & data) if self.a is not None else None
+            next_state.update_flags_nz(next_state.a)
+        elif c == 'BIT':
+            # TODO:
+            self.unknown_flags()
+        elif c == 'CMP':
+            # TODO:
+            self.unknown_flags()
+        elif c == 'CPX':
+            # TODO:
+            self.unknown_flags()
+        elif c == 'CPY':
+            # TODO:
+            self.unknown_flags()
+        elif c == 'EOR':
+            next_state.a = (self.a ^ data) if self.a is not None else None
+            next_state.update_flags_nz(next_state.a)
+        elif c == 'LDA':
+            next_state.a = data
+            next_state.update_flags_nz(next_state.a)
+            next_state.phase = Phase.Fetch
+        elif c == 'LDX':
+            next_state.x = data
+            next_state.update_flags_nz(next_state.x)
+            next_state.phase = Phase.Fetch
+        elif c == 'LDY':
+            next_state.y = data
+            next_state.update_flags_nz(next_state.y)
+            next_state.phase = Phase.Fetch
+        elif c == 'ORA':
+            next_state.a = (self.a | data) if self.a is not None else None
+            next_state.update_flags_nz(next_state.a)
+        elif c == 'SBC':
+            # TODO:
+            self.a = None
+            self.unknown_flags()
         
         return next_state
     
@@ -589,38 +585,33 @@ class Cpu:
 
         if self.phase == Phase.Load:
             am = self.addr_mode()
-            match am:
-                case 'zpg':
-                    return AddrConstraint.Pc, None
-                case 'abs':
-                    return AddrConstraint.Pc, None
+            if am == 'zpg':
+                return AddrConstraint.Pc, None
+            elif am == 'abs':
+                return AddrConstraint.Pc, None
         
         if self.phase == Phase.Execute:
             c = self.opcode()
-            match c:
-                case 'STA' | 'LDA':
-                    return None, DataConstraint.A
-                case 'STX' | 'LDX':
-                    return None, DataConstraint.X
-                case 'STY' | 'LDY':
-                    return None, DataConstraint.Y
-
+            if c == 'STA' or c == 'LDA':
+                return None, DataConstraint.A
+            elif c == 'STX' or c == 'LDX':
+                return None, DataConstraint.X
+            elif c == 'STY' or c == 'LDY':
+                return None, DataConstraint.Y
         
         return None, None
     
     def apply_constraints(self, bus_state: BusState):
         addr_cons, data_cons = self.bus_state_constraints()
-        match addr_cons:
-            case AddrConstraint.Pc:
-                self.pc = bus_state.addr
+        if addr_cons == AddrConstraint.Pc:
+            self.pc = bus_state.addr
         
-        match data_cons:
-            case DataConstraint.A:
-                self.a = bus_state.data
-            case DataConstraint.X:
-                self.x = bus_state.data
-            case DataConstraint.Y:
-                self.y = bus_state.data
+        if data_cons == DataConstraint.A:
+            self.a = bus_state.data
+        elif data_cons == DataConstraint.X:
+            self.x = bus_state.data
+        elif data_cons == DataConstraint.Y:
+            self.y = bus_state.data
     
     def opcode(self):
         if self.ir is None:
@@ -766,11 +757,16 @@ def main():
 
     dbg = Debugger.open(port)
 
+    print(dbg.port.read_exact(1))
+    sys.exit(1)
+
     info = dbg.print_info()
     print('Connected to debugger')
     print(f'Version: {info}')
 
     dbg.reset_cpu()
+
+    last_cmd = ''
 
     free_running = False
     while True:
@@ -811,6 +807,14 @@ def main():
         print()
 
         cmd = input('> ')
+        if cmd != '':
+            last_cmd = cmd
+
+        try:
+            cmd, *args = last_cmd.split()
+        except ValueError:
+            print('empty command')
+            continue
 
         cmd, *args = cmd.split()
 

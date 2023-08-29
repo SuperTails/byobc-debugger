@@ -26,9 +26,13 @@ enum class CommandType : uint8_t {
 	MAX_CMD
 };
 
+#define EEPROM_PAGE_BITS 6
+#define EEPROM_PAGE_SIZE (1 << EEPROM_PAGE_BITS)
+#define EEPROM_PAGE_MASK (EEPROM_PAGE_SIZE - 1)
+
 struct WriteEEPROMCmd {
 	uint16_t addr;
-	uint8_t data[128];
+	uint8_t data[EEPROM_PAGE_SIZE];
 	uint16_t checksum;
 };
 

@@ -19,19 +19,19 @@ using gpio::status_t;
   std::cout << buf << "\n";
 }*/
 
-void delay(int amount) {
+void delay_loop(int amount) {
   volatile int i = 0;
   for (i = 0; i < amount; ++i);
 }
 
 void delay_millis(int millis) {
-  delay(millis * 12);
+  delay_loop(millis * 12);
 }
 
 // Address and data buses must be in output mode.
 // Page must be aligned to a 128-byte boundary (mask 0xFF80).
-void program_eeprom_page(uint16_t page, const uint8_t data[128]) {
-  page &= 0xFF80;
+void program_eeprom_page(uint16_t page, const uint8_t data[EEPROM_PAGE_SIZE]) {
+  page &= ~EEPROM_PAGE_MASK;
 
   gpio::write_gpio1(false); // disable EEPROM output 
 
@@ -52,12 +52,12 @@ void program_eeprom_page(uint16_t page, const uint8_t data[128]) {
   WE_PORT.OUTSET = WE_PIN_MASK;
   asm volatile ("nop");
 
-  for (int i = 0; i < 128; ++i) {
+  for (int i = 0; i < EEPROM_PAGE_SIZE; ++i) {
     WE_PORT.OUTCLR = WE_PIN_MASK;
 
     uint16_t addr = page | i;
 
-    delay(10); // address hold time
+    delay_loop(10); // address hold time
     gpio::write_addr_bus(addr + 1); // in preparation for next falling edge
     gpio::write_data_bus(data[i]); // latched on the rising edge
 
@@ -66,11 +66,87 @@ void program_eeprom_page(uint16_t page, const uint8_t data[128]) {
 
   gpio::write_gpio1(true); // re-enable EEPROM output
   
-  volatile uint16_t k = 0;
-  for (k = 0; k < 50000; ++k);
+  delay_loop(50000);
 }
 
-void setup() {
+#define USED_PINS (8 + 8 + 4 + 4 + 6)
+
+int8_t test_bridged_pins() {
+  PORT_t* BASE_PORTS[5] = { &PORTA, &PORTD, &PORTE, &PORTF, &PORTB };
+  int8_t NUM_BITS[5] = { 8, 8, 4, 4, 6 };
+
+  PORT_t* PORTS[USED_PINS];
+  int8_t  BITS[USED_PINS];
+
+  int8_t port_idx = 0;
+  int8_t bit = 0;
+  for (int8_t i = 0; i < USED_PINS; ++i) {
+    PORTS[i] = BASE_PORTS[port_idx];
+    BITS[i] = bit;
+
+    ++bit;
+    if (bit == NUM_BITS[port_idx]) {
+      ++port_idx;
+      bit = 0;
+    }
+  }
+
+  // Ensure all pins have pullups
+  for (int8_t i = 0; i < USED_PINS; ++i) {
+    *(register8_t*)(((intptr_t)&PORTS[i]->PIN0CTRL) + BITS[i]) |= 0b1000;
+  }
+  
+  int8_t bad_pin = -1;
+
+  for (int8_t i = 0; i < USED_PINS; ++i) {
+    // First, ensure all other pins are outputs driving low 
+    PORTA.DIRSET = 0xFF;
+    PORTD.DIRSET = 0xFF;
+    PORTE.DIRSET = 0x0F;
+    PORTF.DIRSET = 0x0F;
+    PORTB.DIRSET = 0x1F;
+
+    PORTA.OUTCLR = 0xFF;
+    PORTD.OUTCLR = 0xFF;
+    PORTE.OUTCLR = 0x0F;
+    PORTF.OUTCLR = 0x0F;
+    PORTB.OUTCLR = 0xFF;
+    
+    // Now set exactly one pin to an input with a pullup
+    PORTS[i]->DIRCLR = (1 << BITS[i]);
+
+    // Wait for the voltage to stabilize...
+    delay_loop(10000);
+
+    // Make sure the pin isn't being pulled low by being bridged to another pin
+    bool ok = (PORTS[i]->IN >> BITS[i]) & 0x1;
+
+    if (!ok) {
+      bad_pin = i;
+      break;
+    }
+  }
+
+  // Set all pins to be inputs again
+  PORTA.DIRCLR = 0xFF;
+  PORTD.DIRCLR = 0xFF;
+  PORTE.DIRCLR = 0xFF;
+  PORTB.DIRCLR = 0x1F;
+
+  // Disable pullups for all pins again
+  for (int8_t i = 0; i < USED_PINS; ++i) {
+    *(register8_t*)(((intptr_t)&PORTS[i]->PIN0CTRL) + BITS[i]) |= 0b1000;
+  }
+
+  return bad_pin;
+
+  // PORTA pins (all)
+  // PORTD pins (all)
+  // PORTE pins (all)
+  // PORTB pins 0..=5
+}
+
+void setup_pin_directions() {
   NMIB_PORT.OUTSET = NMIB_PIN_MASK;
   RESB_PORT.OUTCLR = RESB_PIN_MASK;
   PHI2_PORT.OUTCLR = PHI2_PIN_MASK;
@@ -83,13 +159,6 @@ void setup() {
   BE_PORT.DIRSET = BE_PIN_MASK;
   WE_PORT.DIRSET = WE_PIN_MASK;
 
-  // Default is CLK_MAIN / 6
-  // New is CLK_MAIN / 16
-
-  /*uint8_t value = (CLKCTRL.MCLKCTRLB & ~0x1F) | 0xB;
-  CCP = 0xD8;
-  CLKCTRL.MCLKCTRLB = value;*/
-
   // Enable pull-up on RDY
   RDY_PORT.PIN5CTRL |= 0b1000;
 
@@ -97,32 +166,32 @@ void setup() {
 
   PORTA.PIN2CTRL |= 0b1000;
   PORTA.PIN3CTRL |= 0b1000;
+}
 
+#define TEST_PINS false
+
+void setup() {
+  // Default is CLK_MAIN / 6
+  // New is CLK_MAIN / 16
+
+  /*uint8_t value = (CLKCTRL.MCLKCTRLB & ~0x1F) | 0xB;
+  CCP = 0xD8;
+  CLKCTRL.MCLKCTRLB = value;*/
+
+  setup_pin_directions();
 
   gpio::set_data_bus_dir(gpio::Direction::Output);
   gpio::write_data_bus(0xEA);
 
   uart::init();
 
-  /*while (1) {
-    uart::put_bytes("Hello, world!\n", strlen("Hello, world!\n"));
-    delay(1000);
-  }*/
+  if (TEST_PINS) {
+    uint8_t result = test_bridged_pins();
 
-  /*while (1) {
-    uart::put_bytes("Hello, world!\n", 14);
+    uart::put(result);
 
-    gpio::write_data_bus(~0xEA);
-
-    volatile long long i;
-    for (i = 0; i < 100000; ++i);
-
-    uart::put_bytes("Hello, world!\n", 14);
-
-    gpio::write_data_bus(0xEA);
-
-    for (i = 0; i < 100000; ++i);
-  }*/
+    while (1) { asm volatile ("nop"); }
+  }
 
   i2c::init();
 
@@ -177,7 +246,7 @@ void setup() {
 
       LED_DRIVER.show_data(data);
 
-      delay(1000);
+      delay_loop(1000);
     }
   }*/
 
@@ -254,7 +323,7 @@ Action handle_commands() {
         uint16_t addr = i + cmd.read_memory.addr;
 
         gpio::write_addr_bus(addr);
-        delay(1);
+        delay_loop(1);
         uint8_t data = gpio::read_data_bus();
         LED_DRIVER.show_data(data);
         uart::put(data);
@@ -323,7 +392,7 @@ void loop() {
 
   /* ---- PHI2 is low ---- */
 
-  delay(50);
+  delay_loop(50);
 
   RESB_PORT.OUTSET = RESB_PIN_MASK;
 
@@ -363,13 +432,13 @@ void loop() {
     }
   } while (WAIT == Wait::HalfCycle);
 
-  delay(50);
+  delay_loop(50);
 
   gpio::write_phi2(true);
 
   /* ---- PHI2 is high ---- */
 
-  delay(50);
+  delay_loop(50);
 
   if (WAIT != Wait::None) {
     addr = gpio::read_addr_bus();
@@ -399,5 +468,5 @@ void loop() {
     }
   } while (WAIT == Wait::HalfCycle || WAIT == Wait::Cycle || (!status.sync() && WAIT == Wait::Sync));
 
-  delay(50);
+  delay_loop(50);
 }

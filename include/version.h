@@ -2,7 +2,7 @@
 
 #define VERSION_YEAR  2023
 #define VERSION_MONTH 8
-#define VERSION_DAY   21
+#define VERSION_DAY   28
 
 struct VersionInfo {
 	uint16_t year;
