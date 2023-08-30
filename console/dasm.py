@@ -1,5 +1,5 @@
 import subprocess
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 from tempfile import NamedTemporaryFile
 from dataclasses import dataclass
 
@@ -50,7 +50,7 @@ def next_number(s: str, base: int) -> Tuple[int, str]:
 
 @dataclass
 class SymbolTable:
-	symbols: dict[str, int]
+	symbols: Dict[str, int]
 
 	def __init__(self, data: str):
 		self.symbols = dict()

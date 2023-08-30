@@ -721,7 +721,7 @@ def main():
     i = 0
     while i < len(argv):
         if argv[i].startswith('--port='):
-            port = argv[i].removeprefix('--port=')
+            port = argv[i][len('--port='):]
             del argv[i]
         else:
             i += 1
