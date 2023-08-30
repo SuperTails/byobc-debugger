@@ -757,8 +757,8 @@ def main():
 
     dbg = Debugger.open(port)
 
-    print(dbg.port.read_exact(1))
-    sys.exit(1)
+    #print(dbg.port.read_exact(1))
+    #sys.exit(1)
 
     info = dbg.print_info()
     print('Connected to debugger')
