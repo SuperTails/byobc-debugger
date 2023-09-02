@@ -142,6 +142,10 @@ class PortWrapper:
     def write(self, data: bytes):
         self.port.write(data)
 
+EEPROM_PAGE_BITS = 6
+EEPROM_PAGE_SIZE = (1 << EEPROM_PAGE_BITS)
+EEPROM_PAGE_MASK = (EEPROM_PAGE_SIZE - 1)
+
 @dataclass
 class VersionInfo:
     year: int
@@ -193,8 +197,8 @@ class Debugger:
             raise Exception("data mismatch")
 
     def _raw_page_write(self, page: int, data: bytes):
-        assert(page & ~0xFF80 == 0)
-        assert(len(data) == 128)
+        assert(page & EEPROM_PAGE_MASK == 0), f'misaligned page {page:04X}'
+        assert(len(data) == EEPROM_PAGE_SIZE)
 
         self.start_command(CMD_WRITE_EEPROM)
 

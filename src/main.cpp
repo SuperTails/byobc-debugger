@@ -35,20 +35,20 @@ void program_eeprom_page(uint16_t page, const uint8_t data[EEPROM_PAGE_SIZE]) {
 
   gpio::write_gpio1(false); // disable EEPROM output 
 
-  gpio::write_addr_bus(0x5555);
+  gpio::write_addr_bus(0x5555 | 0x8000);
   WE_PORT.OUTCLR = WE_PIN_MASK;
   gpio::write_data_bus(0xAA);
-  gpio::write_addr_bus(0x2AAA);
+  gpio::write_addr_bus(0x2AAA | 0x8000);
   WE_PORT.OUTSET = WE_PIN_MASK;
   asm volatile ("nop");
   WE_PORT.OUTCLR = WE_PIN_MASK;
   gpio::write_data_bus(0x55);
-  gpio::write_addr_bus(0x5555);
+  gpio::write_addr_bus(0x5555 | 0x8000);
   WE_PORT.OUTSET = WE_PIN_MASK;
   asm volatile ("nop");
   WE_PORT.OUTCLR = WE_PIN_MASK;
   gpio::write_data_bus(0xA0);
-  gpio::write_addr_bus(page);
+  gpio::write_addr_bus(page | 0x8000);
   WE_PORT.OUTSET = WE_PIN_MASK;
   asm volatile ("nop");
 
@@ -58,7 +58,7 @@ void program_eeprom_page(uint16_t page, const uint8_t data[EEPROM_PAGE_SIZE]) {
     uint16_t addr = page | i;
 
     delay_loop(10); // address hold time
-    gpio::write_addr_bus(addr + 1); // in preparation for next falling edge
+    gpio::write_addr_bus((addr + 1) | 0x8000); // in preparation for next falling edge
     gpio::write_data_bus(data[i]); // latched on the rising edge
 
     WE_PORT.OUTSET = WE_PIN_MASK;
