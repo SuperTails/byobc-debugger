@@ -146,6 +146,16 @@ class Chunk:
 	base_addr: int
 	data: bytes
 
+def get_chunks(bin_data: bytes):
+	chunks = []
+	while len(bin_data) > 0:
+		chunk_base_addr = int.from_bytes(bin_data[0:2], 'little')
+		chunk_length = int.from_bytes(bin_data[2:4], 'little')
+		chunk_data = bin_data[4:][:chunk_length]
+		bin_data = bin_data[4 + chunk_length:]
+		chunks.append(Chunk(chunk_base_addr, chunk_data))
+	return chunks
+
 @dataclass
 class AssembledFile:
 	chunks: List[Chunk]
@@ -178,13 +188,7 @@ class AssembledFile:
 			with open(sym_path, 'r') as f:
 				sym_data = f.read()
 
-		chunks = []
-		while len(bin_data) > 0:
-			chunk_base_addr = int.from_bytes(bin_data[0:2], 'little')
-			chunk_length = int.from_bytes(bin_data[2:4], 'little')
-			chunk_data = bin_data[4:][:chunk_length]
-			bin_data = bin_data[4 + chunk_length:]
-			chunks.append(Chunk(chunk_base_addr, chunk_data))
+		chunks = get_chunks(bin_data)
 		
 		return cls(chunks, Listing(lst_data), SymbolTable(sym_data))
 

@@ -8,15 +8,19 @@ import copy
 def main():
     port = None
     dasm_path = None
+    is_bin = False
 
     argv = copy.copy(sys.argv)
     i = 0
     while i < len(argv):
         if argv[i].startswith('--port='):
-            port = argv[i].removeprefix('--port=')
+            port = argv[i][len('--port='):]
             del argv[i]
         elif argv[i].startswith('--dasm='):
-            dasm_path = argv[i].removeprefix('--dasm=')
+            dasm_path = argv[i][len('--dasm='):]
+            del argv[i]
+        elif argv[i].startswith('--bin'):
+            is_bin = True
             del argv[i]
         else:
             i += 1
@@ -25,7 +29,7 @@ def main():
         print('Must specify a port for the debugger using --port=<port>')
         sys.exit(1)
     
-    if dasm_path is None:
+    if dasm_path is None and not is_bin:
         print('Must specify location of the DASM executable using --dasm=<path>')
         sys.exit(1)
 
@@ -38,11 +42,18 @@ def main():
 
     output_dir = './'
 
-    try:
-        output = dasm.AssembledFile.from_src(dasm_path, input_path, output_dir)
-    except dasm.AssemblerError:
-        print(f'Encountered errors while assembling file')
-        sys.exit(1)
+    if is_bin:
+        with open(input_path, 'rb') as f:
+            bin_data = f.read()
+        chunks = dasm.get_chunks(bin_data)
+    else:
+        try:
+            assert(dasm_path is not None)
+            output = dasm.AssembledFile.from_src(dasm_path, input_path, output_dir)
+            chunks = output.chunks
+        except dasm.AssemblerError:
+            print(f'Encountered errors while assembling file')
+            sys.exit(1)
 
     print('Connecting to debugger')
 
@@ -50,11 +61,11 @@ def main():
     print(dbg.ping())
 
     print('Flashing EEPROM')
-    total_pages = sum((len(c.data) + EEPROM_PAGE_SIZE - 1) // EEPROM_PAGE_SIZE for c in output.chunks)
+    total_pages = sum((len(c.data) + EEPROM_PAGE_SIZE - 1) // EEPROM_PAGE_SIZE for c in chunks)
     print(f'Need to flash {total_pages} pages')
 
-    for i, chunk1 in enumerate(output.chunks):
-        for chunk2 in output.chunks[i + 1:]:
+    for i, chunk1 in enumerate(chunks):
+        for chunk2 in chunks[i + 1:]:
             c1_start = chunk1.base_addr // EEPROM_PAGE_SIZE
             c1_end = (chunk1.base_addr + len(chunk1.data) + EEPROM_PAGE_SIZE - 1) // EEPROM_PAGE_SIZE
 
@@ -64,7 +75,7 @@ def main():
             if max(c1_start, c2_start) <= min(c1_end, c2_end):
                 raise Exception('TODO: Overlapping chunks')
     
-    for chunk in output.chunks:
+    for chunk in chunks:
         base_addr = chunk.base_addr & ~EEPROM_PAGE_MASK
         data = copy.copy(chunk.data)
         if chunk.base_addr & EEPROM_PAGE_MASK != 0:
