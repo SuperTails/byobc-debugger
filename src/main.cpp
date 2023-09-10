@@ -36,37 +36,52 @@ void program_eeprom_page(uint16_t page, const uint8_t data[EEPROM_PAGE_SIZE]) {
   gpio::write_gpio1(false); // disable EEPROM output 
 
   gpio::write_addr_bus(0x5555 | 0x8000);
+  delay_loop(5);
   WE_PORT.OUTCLR = WE_PIN_MASK;
+  delay_loop(1);
+
   gpio::write_data_bus(0xAA);
   gpio::write_addr_bus(0x2AAA | 0x8000);
+  delay_loop(5);
   WE_PORT.OUTSET = WE_PIN_MASK;
-  asm volatile ("nop");
+  delay_loop(1);
   WE_PORT.OUTCLR = WE_PIN_MASK;
+  delay_loop(1);
+
   gpio::write_data_bus(0x55);
   gpio::write_addr_bus(0x5555 | 0x8000);
+  delay_loop(5);
   WE_PORT.OUTSET = WE_PIN_MASK;
-  asm volatile ("nop");
+  delay_loop(1);
   WE_PORT.OUTCLR = WE_PIN_MASK;
+  delay_loop(1);
+
   gpio::write_data_bus(0xA0);
   gpio::write_addr_bus(page | 0x8000);
+  delay_loop(5);
   WE_PORT.OUTSET = WE_PIN_MASK;
-  asm volatile ("nop");
+  delay_loop(1);
 
   for (int i = 0; i < EEPROM_PAGE_SIZE; ++i) {
+    delay_loop(1);
+
     WE_PORT.OUTCLR = WE_PIN_MASK;
+    delay_loop(1);
 
     uint16_t addr = page | i;
 
     delay_loop(10); // address hold time
     gpio::write_addr_bus((addr + 1) | 0x8000); // in preparation for next falling edge
     gpio::write_data_bus(data[i]); // latched on the rising edge
+    delay_loop(10);
 
     WE_PORT.OUTSET = WE_PIN_MASK;
   }
 
-  gpio::write_gpio1(true); // re-enable EEPROM output
-  
   delay_loop(50000);
+  delay_loop(50000);
+
+  gpio::write_gpio1(true); // re-enable EEPROM output
 }
 
 #define USED_PINS (8 + 8 + 4 + 4 + 6)
@@ -182,6 +197,12 @@ void setup() {
 
   gpio::set_data_bus_dir(gpio::Direction::Output);
   gpio::write_data_bus(0xEA);
+
+  // Enable slew rate control
+  PORTD.PORTCTRL |= 0x1;
+  PORTE.PORTCTRL |= 0x1;
+  PORTF.PORTCTRL |= 0x1;
+  PORTC.PORTCTRL |= 0x1;
 
   uart::init();
 
@@ -319,11 +340,13 @@ Action handle_commands() {
       gpio::set_addr_bus_mode(gpio::AddressBusMode::DebuggerDriven);
       gpio::set_data_bus_dir(gpio::Direction::Input);
 
+      delay_loop(5);
+
       for (uint16_t i = 0; i < cmd.read_memory.len; ++i) {
         uint16_t addr = i + cmd.read_memory.addr;
 
         gpio::write_addr_bus(addr);
-        delay_loop(1);
+        delay_loop(5);
         uint8_t data = gpio::read_data_bus();
         LED_DRIVER.show_data(data);
         uart::put(data);

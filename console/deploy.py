@@ -120,7 +120,6 @@ def main():
     print('Resetting CPU')
 
     dbg.reset_cpu()
-    dbg.cont()
 
     print('Done!')
 
