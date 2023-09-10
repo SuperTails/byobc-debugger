@@ -192,9 +192,43 @@ class Debugger:
         time.sleep(0.015)
         written = self.read(page, len(data))
         if data != written:
-            print(f'wrote data:    {data}')
-            print(f'but read back: {written}')
-            raise Exception("data mismatch")
+            print('Data mismatch')
+
+            print('(first 32 bytes)')
+            print('tried to write: ', end='')
+            for d in data[:32]:
+                print(f'{d:02X} ', end='')
+            print()
+            print('but read back:  ', end='')
+            for d in written[:32]:
+                print(f'{d:02X} ', end='')
+            print()
+            print('                ', end='')
+            for d, w in zip(data[:32], written[:32]):
+                if d != w:
+                    print('^^ ', end='')
+                else:
+                    print('   ', end='')
+            print()
+            print()
+            
+            print('(last 32 bytes)')
+            print('tried to write: ', end='')
+            for d in data[32:][:32]:
+                print(f'{d:02X} ', end='')
+            print()
+            print('but read back:  ', end='')
+            for d in written[32:][:32]:
+                print(f'{d:02X} ', end='')
+            print()
+            print('                ', end='')
+            for d, w in zip(data[32:][:32], written[32:][:32]):
+                if d != w:
+                    print('^^ ', end='')
+                else:
+                    print('   ', end='')
+            print()
+            raise Exception('data mismatch')
 
     def _raw_page_write(self, page: int, data: bytes):
         assert(page & EEPROM_PAGE_MASK == 0), f'misaligned page {page:04X}'
@@ -766,7 +800,8 @@ def main():
 
     info = dbg.print_info()
     print('Connected to debugger')
-    print(f'Version: {info}')
+    print(f'Firmware version: {info}')
+    print('Successfully connected to debugger!')
 
     dbg.reset_cpu()
 
