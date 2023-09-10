@@ -37,12 +37,20 @@ def main():
         print('Wrong number of arguments')
         print('Usage: python deploy.py [options] <path to asm>')
         sys.exit(1)
-
+    
     input_path = argv[1]
 
     output_dir = './'
 
     if is_bin:
+        if input_path.lower().endswith('.s'):
+            print('Warning: .S files usually are text, not binary, and should not be used with --bin!')
+            response = input("Are you sure you want to flash this file? (y/n): ")
+            response = response.strip().lower()
+            if response != 'y':
+                print('Canceled')
+                return
+
         with open(input_path, 'rb') as f:
             bin_data = f.read()
         chunks = dasm.get_chunks(bin_data)
@@ -56,9 +64,30 @@ def main():
             sys.exit(1)
 
     print('Connecting to debugger')
-
     dbg = debugger.Debugger.open(port)
-    print(dbg.ping())
+    print(f'Firmware version: {dbg.print_info()}')
+    print('Successfully connected to debugger!')
+    print()
+
+    bad_chunks = []
+    for chunk in chunks:
+        if not (0 <= chunk.base_addr <= 0xFFFF):
+            raise Exception(f'Invalid chunk address {chunk.base_addr}')
+        if chunk.base_addr < 0x8000:
+            bad_chunks.append(chunk)
+
+    if len(bad_chunks) != 0:
+        print('Warning: found chunks that were outside of the normal EEPROM range!')
+        for chunk in bad_chunks:
+            print(f'  {chunk.base_addr:04X}')
+
+        print("This normally means you're trying to flash something that isn't a binary,")
+        print("or you've accidentally included your variables in the output.")
+        response = input("Do you want to continue? (y/n): ")
+        response = response.strip().lower()
+        if response != 'y':
+            print('Canceled')
+            return
 
     print('Flashing EEPROM')
     total_pages = sum((len(c.data) + EEPROM_PAGE_SIZE - 1) // EEPROM_PAGE_SIZE for c in chunks)

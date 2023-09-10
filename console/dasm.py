@@ -141,6 +141,9 @@ def tabs_to_spaces(s: str, width: int) -> str:
 		
 	return result
 
+class ChunkFormatError(Exception):
+	'''Raised when reading a bin file that does not have enough data.'''
+
 @dataclass
 class Chunk:
 	base_addr: int
@@ -149,9 +152,13 @@ class Chunk:
 def get_chunks(bin_data: bytes):
 	chunks = []
 	while len(bin_data) > 0:
+		if len(bin_data) < 4:
+			raise ChunkFormatError()
 		chunk_base_addr = int.from_bytes(bin_data[0:2], 'little')
 		chunk_length = int.from_bytes(bin_data[2:4], 'little')
 		chunk_data = bin_data[4:][:chunk_length]
+		if len(bin_data) < 4 + chunk_length:
+			raise ChunkFormatError()
 		bin_data = bin_data[4 + chunk_length:]
 		chunks.append(Chunk(chunk_base_addr, chunk_data))
 	return chunks
