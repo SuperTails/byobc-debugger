@@ -99,6 +99,7 @@ There are several commands, inspired by GDB's interface.
 |  `y`  | `stepcycle` | Advances until the next cycle, i.e. when PHI2 is high. |
 |  `h`  | `stephalf`  | Advances to the next half cycle, i.e. if PHI2 is high it will go low and vice versa. |
 |  `c`  | `continue`  | Continues the processor at full speed. Use Ctrl-C to pause the program again. |
+|  `w`  | `walk`      | Continues the processor at slow speed. Use Ctrl-C to pause the program again. |
 |  `b`  | `break`     | Sets a breakpoint at a given source location. See below for usage. |
 |  `q`  | `quit`      | Exits the debugger. |
 

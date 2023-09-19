@@ -329,7 +329,7 @@ def are_different_or_none(lhs, rhs):
     return lhs != rhs
 
 def byte_to_signed(b: int):
-    return int.from_bytes(b.to_bytes(1), 'little', signed=True)
+    return int.from_bytes(b.to_bytes(1, 'little'), 'little', signed=True)
 
 @dataclass
 class Cpu:
@@ -563,6 +563,12 @@ class Cpu:
             # TODO:
             self.a = None
             self.unknown_flags()
+        elif c == 'CLC':
+            next_state.update_flag_c(0)
+        elif c == 'SEC':
+            next_state.update_flag_c(1)
+        elif c == 'CLV':
+            next_state.update_flag_v(0)
         
         return next_state
     
@@ -808,6 +814,7 @@ def main():
     last_cmd = ''
 
     free_running = False
+    walking = False
     while True:
         if free_running:
             try:
@@ -817,11 +824,15 @@ def main():
                         print(f'Hit breakpoint {which_breakpoint}, stopping')
                         break
                     time.sleep(0.1)
+                    if walking:
+                        dbg.step()
+                        time.sleep(0.2)
             except KeyboardInterrupt:
                 print('Keyboard interrupt, stopping')
                 dbg.step_half_cycle()
             
             free_running = False
+            walking = False
 
         state = dbg.get_bus_state()
         if dbg.cpu.pc is not None and listing is not None:
@@ -873,6 +884,9 @@ def main():
             elif cmd in ('c', 'continue'):
                 free_running = True
                 dbg.cont()
+            elif cmd in ('w', 'walk'):
+                free_running = True
+                walking = True
             elif cmd in ('q'):
                 break
             elif cmd in ('r', 'reset'):
