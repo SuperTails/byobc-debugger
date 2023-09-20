@@ -869,8 +869,6 @@ def main():
             print('empty command')
             continue
 
-        cmd, *args = cmd.split()
-
         try:
             if cmd in ('s', 'step'):
                 free_running = False
