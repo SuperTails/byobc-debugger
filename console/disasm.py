@@ -21,6 +21,9 @@ class AddrMode(Enum):
     'X-indexed Indirect'
     IndY = 'ind,Y'
     'Indirect, Y indexed'
+
+class DecodeError(Exception):
+    pass
     
 def get_modes(inst: int):
     assert(0 <= inst < 256)
@@ -84,7 +87,7 @@ def get_modes(inst: int):
         mode = ['ind,X', 'zpg', '#', 'abs', 'ind,Y', 'zpg,X', 'abs,Y', 'abs,X'][bbb]
 
         if opcode == 'STA' and mode == '#':
-            raise Exception('STA # does not exist')
+            raise DecodeError('STA # does not exist')
 
         return (opcode, mode)
     elif cc == 0b10:
@@ -94,10 +97,10 @@ def get_modes(inst: int):
         mode = ['#', 'zpg', 'A', 'abs', None, 'zpg,X', None, 'abs,X'][bbb]
 
         if mode is None:
-            raise Exception('invalid addressing mode bits')
+            raise DecodeError(f'invalid addressing mode bits {bbb} for group 2')
         
         if mode == '#' and opcode != 'LDX':
-            raise Exception()
+            raise DecodeError(f'group 2 immediate must be LDX')
         
         if opcode in ('STX', 'LDX') and mode == 'zp,X':
             mode = 'zp,Y'
@@ -113,11 +116,11 @@ def get_modes(inst: int):
         mode = ['#', 'zpg', None, 'abs', None, 'zpg,X', None, 'abs,X'][bbb]
 
         if opcode is None:
-            raise Exception()
+            raise DecodeError(f'invalid opcode bits {aaa} for group 3')
         if mode is None:
-            raise Exception()
+            raise DecodeError(f'invalid addresing mode bits {aaa} for group 3')
 
         return (opcode, mode)
     else:
-        return None
+        raise DecodeError(f'reserved cc=11 instruction')
 

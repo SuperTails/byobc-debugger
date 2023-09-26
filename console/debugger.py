@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Optional
 from enum import Enum
 import time
-from disasm import AddrMode
+from disasm import AddrMode, DecodeError
 import disasm
 import dasm
 import copy
@@ -288,11 +288,16 @@ class Debugger:
     
     def step(self):
         while True:
-            self.start_command(CMD_STEP_CYCLE)
-            state = self.get_bus_state()
-            self.cpu.update(state)
+            self.step_cycle()
             if state.sync:
                 break
+        
+    def step_half_no_update(self):
+        self.start_command(CMD_STEP_HALF_CYCLE)
+    
+    def update_on_state(self):
+        state = self.get_bus_state()
+        self.cpu.update(state)
     
     def step_half_cycle(self):
         self.start_command(CMD_STEP_HALF_CYCLE)
@@ -300,9 +305,11 @@ class Debugger:
         self.cpu.update(state)
     
     def step_cycle(self):
-        self.start_command(CMD_STEP_CYCLE)
-        state = self.get_bus_state()
-        self.cpu.update(state)
+        #self.start_command(CMD_STEP_CYCLE)
+        #state = self.get_bus_state()
+        #self.cpu.update(state)
+        self.step_half_cycle()
+        self.step_half_cycle()
     
     def cont(self):
         self.start_command(CMD_CONTINUE)
@@ -660,22 +667,22 @@ class Cpu:
     def opcode(self):
         if self.ir is None:
             return None
-        m = disasm.get_modes(self.ir)
-        if m is None:
+
+        try:
+            c, _ = disasm.get_modes(self.ir)
+            return c
+        except DecodeError:
             return None
 
-        c, _ = disasm.get_modes(self.ir)
-        return c
-    
     def addr_mode(self):
         if self.ir is None:
             return None
-        m = disasm.get_modes(self.ir)
-        if m is None:
+        
+        try:
+            _, m = disasm.get_modes(self.ir)
+            return m
+        except DecodeError:
             return None
-
-        _, m = disasm.get_modes(self.ir)
-        return m
     
     def update_flag_c(self, c):
         self.p_mask |= 0b0000_0001
@@ -704,6 +711,9 @@ class Cpu:
         self.p_mask = 0b0000_0000
 
     def update(self, state: BusState):
+        if not state.phi2:
+            return
+
         assert(self.next_state is not None)
         self.use_next_state()
 
@@ -819,14 +829,19 @@ def main():
         if free_running:
             try:
                 while True:
+                    if walking:
+                        dbg.step_half_no_update()
+
                     which_breakpoint = dbg.poll_breakpoint()
+
+                    if walking:
+                        dbg.update_on_state()
+
                     if which_breakpoint is not None:
                         print(f'Hit breakpoint {which_breakpoint}, stopping')
                         break
+                    
                     time.sleep(0.1)
-                    if walking:
-                        dbg.step()
-                        time.sleep(0.2)
             except KeyboardInterrupt:
                 print('Keyboard interrupt, stopping')
                 dbg.step_half_cycle()
