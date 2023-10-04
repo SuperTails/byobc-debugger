@@ -289,6 +289,7 @@ class Debugger:
     def step(self):
         while True:
             self.step_cycle()
+            state = self.get_bus_state()
             if state.sync:
                 break
         
