@@ -92,19 +92,8 @@ recv_loop:
 	JMP recv_loop
 
 
-
-
-	LDA #'A			; This loads the ASCII value of the letter 'A', which is 65 decimal or $41 hex.
-print_a:
-	STA VIA_REG_B	; Set the data lines to the character we want to show
-	STX VIA_REG_A	; Turn enable on, set control signals
-	STY VIA_REG_A	; Turn enable off
-
-	jmp print_a		; Print the letter A forever
-
 my_string:
 	DC.B "Hello, world!", 0
-
 
 	ORG $FFFA
 reset_vectors:
