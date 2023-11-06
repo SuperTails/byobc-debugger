@@ -404,6 +404,13 @@ Action handle_commands() {
   return Action::None;
 }
 
+inline void delay_microsecond() {
+  asm volatile ("nop");
+  asm volatile ("nop");
+  asm volatile ("nop");
+  asm volatile ("nop");
+}
+
 void loop() {
   uint16_t addr;
   uint8_t data;
@@ -415,7 +422,7 @@ void loop() {
 
   /* ---- PHI2 is low ---- */
 
-  delay_loop(50);
+  delay_microsecond();
 
   RESB_PORT.OUTSET = RESB_PIN_MASK;
 
@@ -455,13 +462,13 @@ void loop() {
     }
   } while (WAIT == Wait::HalfCycle);
 
-  delay_loop(50);
+  delay_microsecond();
 
   gpio::write_phi2(true);
 
   /* ---- PHI2 is high ---- */
 
-  delay_loop(50);
+  delay_microsecond();
 
   if (WAIT != Wait::None) {
     addr = gpio::read_addr_bus();
@@ -491,5 +498,5 @@ void loop() {
     }
   } while (WAIT == Wait::HalfCycle || WAIT == Wait::Cycle || (!status.sync() && WAIT == Wait::Sync));
 
-  delay_loop(50);
+  delay_microsecond();
 }
