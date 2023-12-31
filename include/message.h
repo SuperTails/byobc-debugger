@@ -10,6 +10,22 @@ struct BusState {
 	uint8_t _padding;
 };
 
+struct CpuState {
+	uint16_t addr;
+	uint16_t pc;
+	uint8_t data;
+	uint8_t a;
+	uint8_t x;
+	uint8_t y;
+	uint8_t s;
+	uint8_t p;
+	uint8_t status; // from LSB to MSB: rwb, sync, vpb, phi2
+	uint8_t _padding[2];
+	uint8_t mode;
+	uint8_t oper;
+	uint8_t seq_cycle;
+};
+
 enum class CommandType : uint8_t {
 	Ping = 0x1,
 	WriteEEPROM = 0x2,
@@ -23,6 +39,7 @@ enum class CommandType : uint8_t {
 	Continue = 0xA,
 	HitBreakpoint = 0xB,
 	PrintInfo = 0xC,
+	GetCpuState = 0xD,
 	MAX_CMD
 };
 

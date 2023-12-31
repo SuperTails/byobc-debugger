@@ -29,6 +29,9 @@ namespace gpio {
 	void set_irqb_dir(Direction dir);
 	void set_gpio1_dir(Direction dir);
 	void set_phi2_dir(Direction dir);
+	void set_rwb_dir(Direction dir);
+	void set_sync_dir(Direction dir);
+	void set_vpb_dir(Direction dir);
 	void set_resb_dir(Direction dir);
 	void set_nmib_dir(Direction dir);
 
@@ -37,6 +40,9 @@ namespace gpio {
 	void write_we(bool level);
 	void write_be(bool level);
 	void write_phi2(bool level);
+	void write_rwb(bool level);
+	void write_sync(bool level);
+	void write_vpb(bool level);
 	void write_resb(bool level);
 	void write_nmib(bool level);
 

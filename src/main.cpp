@@ -6,18 +6,13 @@
 #include "gpio.h"
 #include "version.h"
 
+#include "physicalw65c02.h"
+
 #include <Arduino.h>
 
 LedDriver LED_DRIVER;
 
 using gpio::status_t;
-
-/*int main() {
-  DecodedInstr a = { BaseOp::Lda, AddrMode::AbsX, { 0x42, 0x69 }, 0 };
-  char buf[MAX_INSTR_DISPLAY_SIZE+1];
-  a.format(buf);
-  std::cout << buf << "\n";
-}*/
 
 void delay_loop(int amount) {
   volatile int i = 0;
@@ -185,108 +180,6 @@ void setup_pin_directions() {
 
 #define TEST_PINS false
 
-void setup() {
-  // Default is CLK_MAIN / 6
-  // New is CLK_MAIN / 16
-
-  /*uint8_t value = (CLKCTRL.MCLKCTRLB & ~0x1F) | 0xB;
-  CCP = 0xD8;
-  CLKCTRL.MCLKCTRLB = value;*/
-
-  setup_pin_directions();
-
-  gpio::set_data_bus_dir(gpio::Direction::Output);
-  gpio::write_data_bus(0xEA);
-
-  // Enable slew rate control
-  PORTD.PORTCTRL |= 0x1;
-  PORTE.PORTCTRL |= 0x1;
-  PORTF.PORTCTRL |= 0x1;
-  PORTC.PORTCTRL |= 0x1;
-
-  uart::init();
-
-  if (TEST_PINS) {
-    uint8_t result = test_bridged_pins();
-
-    uart::put(result);
-
-    while (1) { asm volatile ("nop"); }
-  }
-
-  i2c::init();
-
-  LED_DRIVER.init();
-
-  LED_DRIVER.show_status({ 0xFFFF });
-
-  /*while (1) {
-    LED_DRIVER.show_data(FUSE.SYSCFG0);
-  }*/
-
-  /*while (1) {
-    LED_DRIVER.show_addr(0x1234);
-
-    volatile uint32_t k = 0;
-    for (k = 0; k < 500000; ++k);
-
-    LED_DRIVER.show_addr(0x4321);
-
-    for (k = 0; k < 500000; ++k);
-  }*/
-
-  /*while (1) {
-    uint16_t keys = LED_DRIVER.keyscan();
-    LED_DRIVER.show_addr(keys);
-  }*/
-
-  gpio::set_gpio1_dir(gpio::Direction::Output);
-
-  gpio::write_gpio1(true); // enable the EEPROM outputs
-  gpio::write_we(true);
-
-  //uart::put_bytes("Hello, world!\n", 14);
-
-  gpio::write_be(true); // enable the 6502 buses
-
-  gpio::set_addr_bus_dir(gpio::Direction::Input);
-  gpio::set_data_bus_dir(gpio::Direction::Input);
-
-  /*while (1) {
-    gpio::set_addr_bus_dir(gpio::Direction::Output);
-    gpio::set_data_bus_dir(gpio::Direction::Input);
-    gpio::write_gpio1(false);
-    for (int i = 0xC0; i < 256; ++i) {
-      uint16_t addr = 0xFF00 | i;
-
-      gpio::write_addr_bus(addr);
-
-      LED_DRIVER.show_addr(addr);
-
-      uint8_t data = gpio::read_data_bus();
-
-      LED_DRIVER.show_data(data);
-
-      delay_loop(1000);
-    }
-  }*/
-
-  #if 0
-
-  uint16_t i = 0;
-  while (1) {
-    //uart::put_bytes("Hello, world!\n", 14);
-    //continue;
-
-    uart::put(0x55);
-
-    LED_DRIVER.show_addr(i++);
-  }
-
-  #endif
-
-  RESB_PORT.OUTCLR = RESB_PIN_MASK;
-}
 
 #define MAX_BREAKPOINTS 16
 
@@ -297,6 +190,17 @@ struct Breakpoint {
 
 static Breakpoint BREAKPOINTS[MAX_BREAKPOINTS];
 static int8_t NUM_BREAKPOINTS = 0;
+
+// Returns the index of the breakpoint we hit, or -1 if no breakpoint was hit.
+int has_hit_enabled_breakpoint(uint16_t addr) {
+  for (int8_t i = 0; i < NUM_BREAKPOINTS; ++i) {
+    if (BREAKPOINTS[i].addr == addr && BREAKPOINTS[i].enabled) {
+      return i;
+    }
+  }
+
+  return -1;
+}
 
 #define STEP
 
@@ -319,9 +223,16 @@ enum class Wait {
 
 static Wait WAIT = Wait::HalfCycle;
 
-Action handle_commands() {
+Action handle_commands(PhysicalW65C02 &cpu, bool phi2) {
   Command cmd;
-  while (get_command(cmd) == 0) {
+  while (true) {
+    int result = get_command(cmd);
+    if (result == ERR_NO_CMD) {
+      return Action::None;
+    } else if (result != 0) {
+      continue;
+    }
+
     switch (cmd.ty) {
     case CommandType::Ping:
       uart::put_bytes("Pong!", 5);
@@ -332,8 +243,9 @@ Action handle_commands() {
 
       program_eeprom_page(cmd.write_eeprom.addr, cmd.write_eeprom.data);
 
-      gpio::set_addr_bus_dir(gpio::Direction::Input);
-      gpio::set_addr_bus_mode(gpio::AddressBusMode::CpuDriven);
+      //  TODO: Depends!!
+      gpio::set_addr_bus_dir(gpio::Direction::Output);
+      gpio::set_addr_bus_mode(gpio::AddressBusMode::DebuggerDriven);
       break;
     case CommandType::ReadMemory:
       gpio::write_we(true);
@@ -396,9 +308,34 @@ Action handle_commands() {
       uart::put_bytes(reinterpret_cast<const uint8_t*>(&VERSION), sizeof(VERSION));
       break;
     }
+    case CommandType::GetCpuState: {
+      physicalw65c02::BusState bus_state;
+      cpu.get_bus_state(bus_state);
+
+      CpuState state;
+      state.addr = bus_state.addr;
+      state.data = (bus_state.rwb ? gpio::read_data_bus() : bus_state.data);
+      state.status = (bus_state.rwb << 0) | (bus_state.sync << 1) | (bus_state.vpb << 2) | (phi2 << 3);
+
+      state.pc = cpu.pc;
+      state.a = cpu.a;
+      state.x = cpu.x;
+      state.y = cpu.y;
+      state.s = cpu.s;
+      state.p = cpu.p;
+
+      state.mode = (uint8_t)cpu.mode;
+      state.oper = (uint8_t)cpu.oper;
+      state.seq_cycle = cpu.seq_cycle;
+
+      uart::put_bytes(reinterpret_cast<const uint8_t*>(&state), sizeof(CpuState));
+      break;
+    }
     default:
       break;
     }
+
+    break;
   }
 
   return Action::None;
@@ -411,92 +348,337 @@ inline void delay_microsecond() {
   asm volatile ("nop");
 }
 
-void loop() {
-  uint16_t addr;
-  uint8_t data;
-  status_t status;
+void setup() {
+  // Default is CLK_MAIN / 6
+  // New is CLK_MAIN / 16
 
-  // Interrupt signals (IRQB, NMIB, RESB, RDY) are latched on the falling edge.
+  /*uint8_t value = (CLKCTRL.MCLKCTRLB & ~0x1F) | 0xB;
+  CCP = 0xD8;
+  CLKCTRL.MCLKCTRLB = value;*/
 
+  setup_pin_directions();
+
+  gpio::set_data_bus_dir(gpio::Direction::Output);
+  gpio::write_data_bus(0xEA);
+
+  gpio::set_phi2_dir(gpio::Direction::Output);
   gpio::write_phi2(false);
 
-  /* ---- PHI2 is low ---- */
+  // Enable slew rate control
+  PORTD.PORTCTRL |= 0x1;
+  PORTE.PORTCTRL |= 0x1;
+  PORTF.PORTCTRL |= 0x1;
+  PORTC.PORTCTRL |= 0x1;
 
-  delay_microsecond();
+  uart::init();
 
-  RESB_PORT.OUTSET = RESB_PIN_MASK;
+  if (TEST_PINS) {
+    uint8_t result = test_bridged_pins();
 
-  addr = gpio::read_addr_bus();
-  for (int8_t i = 0; i < NUM_BREAKPOINTS; ++i) {
-    if (BREAKPOINTS[i].addr == addr) {
+    uart::put(result);
+
+    while (1) { asm volatile ("nop"); }
+  }
+
+  i2c::init();
+
+  LED_DRIVER.init();
+
+  LED_DRIVER.show_status({ 0xFFFF });
+
+  /*while (1) {
+    LED_DRIVER.show_data(FUSE.SYSCFG0);
+  }*/
+
+  /*while (1) {
+    LED_DRIVER.show_addr(0x1234);
+
+    volatile uint32_t k = 0;
+    for (k = 0; k < 500000; ++k);
+
+    LED_DRIVER.show_addr(0x4321);
+
+    for (k = 0; k < 500000; ++k);
+  }*/
+
+  /*while (1) {
+    uint16_t keys = LED_DRIVER.keyscan();
+    LED_DRIVER.show_addr(keys);
+  }*/
+
+  gpio::set_gpio1_dir(gpio::Direction::Output);
+
+  gpio::write_gpio1(true); // enable the EEPROM outputs
+  gpio::write_we(true);
+
+  //uart::put_bytes("Hello, world!\n", 14);
+
+  gpio::write_be(false); // enable the 6502 buses
+
+  gpio::set_addr_bus_dir(gpio::Direction::Input);
+  gpio::set_data_bus_dir(gpio::Direction::Input);
+
+  gpio::set_addr_bus_dir(gpio::Direction::Output);
+
+  gpio::write_addr_bus(0x8024);
+
+  delay_loop(1000);
+
+
+  /*
+  while (1) {
+    physicalw65c02::BusState state;
+    cpu.get_bus_state(state);
+
+    uint8_t data;
+
+    gpio::write_addr_bus(state.addr);
+
+
+    if (state.rwb) {
+      gpio::set_data_bus_dir(gpio::Direction::Input);
+      data = gpio::read_data_bus();
+    } else {
+      gpio::set_data_bus_dir(gpio::Direction::Output);
+      gpio::write_data_bus(state.data);
+      data = state.data;
+    }
+
+    gpio::write_phi2(true);
+
+    if (++i == 100) {
+      uart::put(0xFF);
+      uart::put(state.addr);
+      uart::put(state.addr >> 8);
+      uart::put(data);
+      i = 0;
+    }
+
+    cpu.tick_cycle({ data });
+    gpio::write_phi2(false);
+  }
+  */
+
+  RESB_PORT.OUTCLR = RESB_PIN_MASK;
+
+  gpio::set_rwb_dir(gpio::Direction::Output);
+  gpio::set_sync_dir(gpio::Direction::Output);
+  gpio::set_vpb_dir(gpio::Direction::Output);
+
+  // Do a single clock cycle with RESB held low to make sure all devices acknowledge it.
+  gpio::write_phi2(false);
+  delay_loop(50);
+  gpio::write_phi2(true);
+  delay_loop(50);
+
+  uint32_t cycle = 0;
+
+  PhysicalW65C02 cpu = {};
+
+  while (1) {
+    uint8_t data;
+
+    // Interrupt signals (IRQB, NMIB, RESB, RDY) are latched on the falling edge.
+    
+    status_t status = gpio::read_status();
+
+    ++cycle;
+
+    if (cycle != 1) {
+      cpu.tick_cycle({ gpio::read_data_bus(), status.resb(), status.irqb(), status.nmib() });
+    }
+
+    gpio::write_phi2(false);
+
+    /* ---- PHI2 is low ---- */
+
+    gpio::set_data_bus_dir(gpio::Direction::Input);
+
+    delay_microsecond();
+
+    RESB_PORT.OUTSET = RESB_PIN_MASK;
+
+    physicalw65c02::BusState cpu_bus_state;
+    cpu.get_bus_state(cpu_bus_state);
+
+
+    // Address and control lines change immediately after the falling edge of PHI2.
+    gpio::write_addr_bus(cpu_bus_state.addr);
+    gpio::write_rwb(cpu_bus_state.rwb);
+    gpio::write_sync(cpu_bus_state.sync);
+    gpio::write_vpb(cpu_bus_state.vpb);
+
+    if (int8_t i = has_hit_enabled_breakpoint(cpu_bus_state.addr); i != -1) {
       WAIT = Wait::HalfCycle;
       hit_breakpoint(i);
-      break;
     }
-  }
 
-  if (WAIT != Wait::None) {
-    data = gpio::read_data_bus();
-    status = gpio::read_status();
-    LED_DRIVER.show_addr(addr);
-    LED_DRIVER.show_data(data);
-    LED_DRIVER.show_status(status);
-  }
+    // TODO: What should the data bus show when PHI2 is low?
+    /*if (WAIT != Wait::None) {
+      data = gpio::read_data_bus();
+      status = gpio::read_status();
+      LED_DRIVER.show_addr(addr);
+      LED_DRIVER.show_data(data);
+      LED_DRIVER.show_status(status);
+    }*/
 
-  uint16_t keyscan;
-  Action action;
-  do {
-    action = handle_commands();
-    if (action == Action::Continue) {
-      WAIT = Wait::None;
-      break;
-    } else if (action == Action::StepHalfCycle) {
-      WAIT = Wait::HalfCycle;
-      break;
-    } else if (action == Action::StepCycle) {
-      WAIT = Wait::Cycle;
-      break;
-    } else if (action == Action::Step) {
-      WAIT = Wait::Sync;
-      break;
+    Action action;
+    do {
+      action = handle_commands(cpu, false);
+      if (action == Action::Continue) {
+        WAIT = Wait::None;
+        break;
+      } else if (action == Action::StepHalfCycle) {
+        WAIT = Wait::HalfCycle;
+        break;
+      } else if (action == Action::StepCycle) {
+        WAIT = Wait::Cycle;
+        break;
+      } else if (action == Action::Step) {
+        WAIT = Wait::Sync;
+        break;
+      }
+    } while (WAIT == Wait::HalfCycle);
+
+    delay_microsecond();
+
+    gpio::write_phi2(true);
+
+    if (!cpu_bus_state.rwb) {
+      gpio::write_data_bus(cpu_bus_state.data);
+      gpio::set_data_bus_dir(gpio::Direction::Output);
     }
-  } while (WAIT == Wait::HalfCycle);
 
-  delay_microsecond();
+    /* ---- PHI2 is high ---- */
 
-  gpio::write_phi2(true);
+    //delay_microsecond();
+    delay_loop(20);
 
-  /* ---- PHI2 is high ---- */
+    // TODO: ???
+    /*if (WAIT != Wait::None) {
+      addr = gpio::read_addr_bus();
+      data = gpio::read_data_bus();
+      status = gpio::read_status();
+      LED_DRIVER.show_addr(addr);
+      LED_DRIVER.show_data(data);
+      LED_DRIVER.show_status(status);
+    }*/
 
-  delay_microsecond();
+    do {
+      action = handle_commands(cpu, true);
+      if (action == Action::Continue) {
+        WAIT = Wait::None;
+        break;
+      } else if (action == Action::StepHalfCycle) {
+        WAIT = Wait::HalfCycle;
+        break;
+      } else if (action == Action::StepCycle) {
+        WAIT = Wait::Cycle;
+        break;
+      } else if (action == Action::Step) {
+        WAIT = Wait::Sync;
+        break;
+      }
+    } while (WAIT == Wait::HalfCycle || WAIT == Wait::Cycle || (!cpu_bus_state.sync && WAIT == Wait::Sync));
 
-  if (WAIT != Wait::None) {
-    addr = gpio::read_addr_bus();
-    data = gpio::read_data_bus();
-    status = gpio::read_status();
-    LED_DRIVER.show_addr(addr);
-    LED_DRIVER.show_data(data);
-    LED_DRIVER.show_status(status);
+    delay_microsecond();
   }
-
-  do {
-    status = gpio::read_status();
-
-    action = handle_commands();
-    if (action == Action::Continue) {
-      WAIT = Wait::None;
-      break;
-    } else if (action == Action::StepHalfCycle) {
-      WAIT = Wait::HalfCycle;
-      break;
-    } else if (action == Action::StepCycle) {
-      WAIT = Wait::Cycle;
-      break;
-    } else if (action == Action::Step) {
-      WAIT = Wait::Sync;
-      break;
-    }
-  } while (WAIT == Wait::HalfCycle || WAIT == Wait::Cycle || (!status.sync() && WAIT == Wait::Sync));
-
-  delay_microsecond();
 }
+
+#if 0
+
+void run_cpu_controlled_loop() {
+  while (1) {
+    uint16_t addr;
+    uint8_t data;
+    status_t status;
+
+    // Interrupt signals (IRQB, NMIB, RESB, RDY) are latched on the falling edge.
+
+    gpio::write_phi2(false);
+
+    /* ---- PHI2 is low ---- */
+
+    delay_microsecond();
+
+    RESB_PORT.OUTSET = RESB_PIN_MASK;
+
+    addr = gpio::read_addr_bus();
+    for (int8_t i = 0; i < NUM_BREAKPOINTS; ++i) {
+      if (BREAKPOINTS[i].addr == addr) {
+        WAIT = Wait::HalfCycle;
+        hit_breakpoint(i);
+        break;
+      }
+    }
+
+    if (WAIT != Wait::None) {
+      data = gpio::read_data_bus();
+      status = gpio::read_status();
+      LED_DRIVER.show_addr(addr);
+      LED_DRIVER.show_data(data);
+      LED_DRIVER.show_status(status);
+    }
+
+    uint16_t keyscan;
+    Action action;
+    do {
+      action = handle_commands(cpu);
+      if (action == Action::Continue) {
+        WAIT = Wait::None;
+        break;
+      } else if (action == Action::StepHalfCycle) {
+        WAIT = Wait::HalfCycle;
+        break;
+      } else if (action == Action::StepCycle) {
+        WAIT = Wait::Cycle;
+        break;
+      } else if (action == Action::Step) {
+        WAIT = Wait::Sync;
+        break;
+      }
+    } while (WAIT == Wait::HalfCycle);
+
+    delay_microsecond();
+
+    gpio::write_phi2(true);
+
+    /* ---- PHI2 is high ---- */
+
+    delay_microsecond();
+
+    if (WAIT != Wait::None) {
+      addr = gpio::read_addr_bus();
+      data = gpio::read_data_bus();
+      status = gpio::read_status();
+      LED_DRIVER.show_addr(addr);
+      LED_DRIVER.show_data(data);
+      LED_DRIVER.show_status(status);
+    }
+
+    do {
+      status = gpio::read_status();
+
+      action = handle_commands(cpu);
+      if (action == Action::Continue) {
+        WAIT = Wait::None;
+        break;
+      } else if (action == Action::StepHalfCycle) {
+        WAIT = Wait::HalfCycle;
+        break;
+      } else if (action == Action::StepCycle) {
+        WAIT = Wait::Cycle;
+        break;
+      } else if (action == Action::Step) {
+        WAIT = Wait::Sync;
+        break;
+      }
+    } while (WAIT == Wait::HalfCycle || WAIT == Wait::Cycle || (!status.sync() && WAIT == Wait::Sync));
+
+    delay_microsecond();
+  }
+}
+
+#endif
+
+void loop() {}

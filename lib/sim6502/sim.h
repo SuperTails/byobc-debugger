@@ -35,21 +35,7 @@ struct bus_status_t {
 	bool nmib()  const { return this->bits & 0x0001; }
 };
 
-enum class CpuState {
-	Int0,
-	Int1,
-	Int2,
-	Int3,
-	Int4,
-	Int5,
-	Int6,
-	Int7,
-
-	Fetch,
-
-	Ex1
-};
-
+/*
 enum class Interrupt {
 	Irq,
 	Reset,
@@ -107,3 +93,4 @@ public:
 	inline void cld() { sr.set_d(0); }
 	inline void sed() { sr.set_d(1); }
 };
+*/

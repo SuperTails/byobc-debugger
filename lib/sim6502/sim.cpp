@@ -40,6 +40,7 @@ single_cycle_op_t SINGLE_CYCLE_OPS[] = {
   nullptr, nullptr, nullptr, nullptr,
 };*/
 
+#if 0
 void Cpu::update(uint16_t ab, uint8_t db, bus_status_t bus) {
 
     if (bus.phi2()) {
@@ -97,3 +98,4 @@ void Cpu::set_state(CpuState state) {
     state_known = true;
     this->state = state;
 }
+#endif

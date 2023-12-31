@@ -64,6 +64,54 @@ CMD_STEP_HALF_CYCLE = b'\x09'
 CMD_CONTINUE = b'\x0A'
 CMD_HIT_BREAKPOINT = b'\x0B'
 CMD_PRINT_INFO = b'\x0C'
+CMD_GET_CPU_STATE = b'\x0D'
+
+@dataclass
+class CpuState:
+    addr: int
+    data: int
+
+    pc: int
+    a:  int
+    x:  int
+    y:  int
+    s:  int
+    p:  int
+
+    rwb:  bool
+    sync: bool
+    vpb:  bool
+    phi2: bool
+
+    mode: int
+    oper: int
+    seq_cycle: int
+
+    @classmethod
+    def from_bytes(cls, b: bytes):
+        assert(len(b) == 16)
+
+        addr = int.from_bytes(b[ 0: 2], 'little')
+        pc   = int.from_bytes(b[ 2: 4], 'little')
+        data = int.from_bytes(b[ 4: 5], 'little')
+        a    = int.from_bytes(b[ 5: 6], 'little')
+        x    = int.from_bytes(b[ 6: 7], 'little')
+        y    = int.from_bytes(b[ 7: 8], 'little')
+        s    = int.from_bytes(b[ 8: 9], 'little')
+        p    = int.from_bytes(b[ 9:10], 'little')
+
+        status = int.from_bytes(b[10:11], 'little')
+
+        rwb  = (status & (1 << 0)) != 0
+        sync = (status & (1 << 1)) != 0
+        vpb  = (status & (1 << 2)) != 0
+        phi2 = (status & (1 << 3)) != 0
+
+        mode = int.from_bytes(b[13:14], 'little')
+        oper = int.from_bytes(b[14:15], 'little')
+        seq_cycle = int.from_bytes(b[15:16], 'little')
+
+        return cls(addr, data, pc, a, x, y, s, p, rwb, sync, vpb, phi2, mode, oper, seq_cycle)
 
 @dataclass
 class BusState:
@@ -279,6 +327,12 @@ class Debugger:
         state = self.port.read_exact(6)
         return BusState.from_bytes(state)
     
+    def get_cpu_state(self) -> CpuState:
+        self.start_command(CMD_GET_CPU_STATE)
+
+        state = self.port.read_exact(16)
+        return CpuState.from_bytes(state)
+    
     def poll_breakpoint(self):
         if self.port.read_nonblocking(1) == CMD_HIT_BREAKPOINT:
             which = self.port.read_exact(1)
@@ -289,7 +343,7 @@ class Debugger:
     def step(self):
         while True:
             self.step_cycle()
-            state = self.get_bus_state()
+            state = self.get_cpu_state()
             if state.sync:
                 break
         
@@ -859,7 +913,29 @@ def main():
                 else:
                     print('    ', end='')
                 print(line.source)
+        
+        cpu_state = dbg.get_cpu_state()
 
+        print()
+        #print(dbg.cpu.display())
+        print(f'PC: {cpu_state.pc:04X}  A: {cpu_state.a:02X} X: {cpu_state.x:02X} Y: {cpu_state.y:02X} P: {cpu_state.p:02X} S: {cpu_state.s:02X} seq_cycle: {cpu_state.seq_cycle}')
+        print(f'ADDR: {cpu_state.addr:04X}')
+        print(f'DATA:   {cpu_state.data:02X}')
+        print(f'STATUS: ', end='')
+        print('SYNC:1 ' if cpu_state.sync else 'sync:0 ', end='')
+        print('rwb:1 (R) ' if cpu_state.rwb else 'RWB:0 (W)', end='')
+        print('resb:1 ' if state.resb else 'RESB:0 ', end='')
+        print('nmib:1 ' if state.nmib else 'NMIB:0 ', end='')
+        print('irqb:1 ' if state.irqb else 'IRQB:0 ', end='')
+        print('vpb:1 ' if cpu_state.vpb  else 'VPB:0 ', end='')
+        print('   |   ', end='')
+        print(f'PHI2: {+cpu_state.phi2}')
+        print(cpu_state.mode)
+        print(cpu_state.oper)
+        print(cpu_state.seq_cycle)
+        print()
+
+        '''
         print()
         print(dbg.cpu.display())
         print(f'ADDR: {state.addr:04X}')
@@ -874,6 +950,7 @@ def main():
         print('   |   ', end='')
         print(f'PHI2: {+state.phi2}')
         print()
+        '''
 
         cmd = input('> ')
         if cmd != '':
@@ -886,7 +963,9 @@ def main():
             continue
 
         try:
-            if cmd in ('s', 'step'):
+            if cmd in ('reload_cpu_state', ):
+                pass
+            elif cmd in ('s', 'step'):
                 free_running = False
                 dbg.step()
             elif cmd in ('h', 'stephalf'):

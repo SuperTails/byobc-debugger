@@ -54,6 +54,7 @@ int get_command(Command &cmd) {
 	case CommandType::StepCycle:
 	case CommandType::Continue:
 	case CommandType::PrintInfo:
+	case CommandType::GetCpuState:
 		break;
 	case CommandType::MAX_CMD:
 		break;

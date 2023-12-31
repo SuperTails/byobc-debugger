@@ -68,6 +68,15 @@ namespace gpio {
 	void set_phi2_dir(Direction dir) {
 		PHI2_PORT.DIR = (PHI2_PORT.DIR & ~PHI2_PIN_MASK) | (static_cast<uint8_t>(dir) << PHI2_PIN);
 	}
+	void set_rwb_dir(Direction dir) {
+		RWB_PORT.DIR = (RWB_PORT.DIR & ~RWB_PIN_MASK) | (static_cast<uint8_t>(dir) << RWB_PIN);
+	}
+	void set_sync_dir(Direction dir) {
+		SYNC_PORT.DIR = (SYNC_PORT.DIR & ~SYNC_PIN_MASK) | (static_cast<uint8_t>(dir) << SYNC_PIN);
+	}
+	void set_vpb_dir(Direction dir) {
+		VPB_PORT.DIR = (VPB_PORT.DIR & ~VPB_PIN_MASK) | (static_cast<uint8_t>(dir) << VPB_PIN);
+	}
 	void set_resb_dir(Direction dir) {
 		RESB_PORT.DIR = (RESB_PORT.DIR & ~RESB_PIN_MASK) | (static_cast<uint8_t>(dir) << RESB_PIN);
 	}
@@ -89,6 +98,15 @@ namespace gpio {
 	}
 	void write_phi2(bool level) {
 		PHI2_PORT.OUT = (PHI2_PORT.OUT & ~PHI2_PIN_MASK) | (level << PHI2_PIN);
+	}
+	void write_rwb(bool level) {
+		RWB_PORT.OUT = (RWB_PORT.OUT & ~RWB_PIN_MASK) | (level << RWB_PIN);
+	}
+	void write_sync(bool level) {
+		SYNC_PORT.OUT = (SYNC_PORT.OUT & ~SYNC_PIN_MASK) | (level << SYNC_PIN);
+	}
+	void write_vpb(bool level) {
+		VPB_PORT.OUT = (VPB_PORT.OUT & ~VPB_PIN_MASK) | (level << VPB_PIN);
 	}
 	void write_resb(bool level) {
 		RESB_PORT.OUT = (RESB_PORT.OUT & ~RESB_PIN_MASK) | (level << RESB_PIN);
