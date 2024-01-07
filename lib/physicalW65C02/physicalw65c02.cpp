@@ -290,13 +290,23 @@ bool crosses_boundary_u(uint16_t lhs, uint8_t offset) {
 
 
 void PhysicalW65C02::tick_cycle(BusInState state) {
+    if (!state.resb) {
+        in_rst = true;
+        in_nmi = false;
+        in_irq = false;
+        seq_cycle = 1;
+        mode = Mode::STACK_BRK;
+        oper = W65C02S_OPER_BRK;
+        return;
+    }
+
 	switch (mode) {
 		case Mode::FETCH: tick_cycle_fetch(state); break;
 
 		case Mode::IMMEDIATE: tick_cycle_immediate(state); break;
 
 		case Mode::IMPLIED: tick_cycle_implied(state); break;
-		case Mode::IMPLIED_1C: assert(false && "TODO: implied 1-cycle mode");
+		case Mode::IMPLIED_1C: error = true; break;
 		case Mode::IMPLIED_X: if (oper == W65C02S_OPER_INC) update_nz(++x); else update_nz(--x); seq_cycle = -1; break;
 		case Mode::IMPLIED_Y: if (oper == W65C02S_OPER_INC) update_nz(++y); else update_nz(--y); seq_cycle = -1; break;
 
@@ -317,7 +327,7 @@ void PhysicalW65C02::tick_cycle(BusInState state) {
 		case Mode::ABSOLUTE_INDIRECT: tick_cycle_absolute_indirect(state); break; 
 		case Mode::ABSOLUTE_INDIRECT_X: tick_cycle_absolute_indirect_x(state); break; 
 		case Mode::RELATIVE: tick_cycle_relative(state); break; 
-		case Mode::RELATIVE_BIT: assert(false && "TODO: RELATIVE_BIT"); break; 
+		case Mode::RELATIVE_BIT: error = true; break; 
 		case Mode::RMW_ZEROPAGE: tick_cycle_rmw_zeropage(state); break; 
 		case Mode::RMW_ZEROPAGE_X: tick_cycle_rmw_zeropage_x(state); break; 
 		case Mode::RMW_ABSOLUTE: tick_cycle_rmw_absolute(state); break; 
@@ -329,10 +339,10 @@ void PhysicalW65C02::tick_cycle(BusInState state) {
 		case Mode::STACK_PUSH: tick_cycle_stack_push(state); break; 
 		case Mode::STACK_PULL: tick_cycle_stack_pull(state); break; 
 		case Mode::STACK_RTI: tick_cycle_stack_rti(state); break; 
-		case Mode::NOP_5C: assert(false && "TODO: C"); break; 
-		case Mode::INT_WAIT_STOP: assert(false && "TODO: INT_WAIT_STOP"); break; 
+		case Mode::NOP_5C: error = true; break; 
+		case Mode::INT_WAIT_STOP: error = true; break; 
 
-		default: assert(false);
+		default: error = true; break;
 	}
 
     if (++seq_cycle == 0) {
@@ -341,9 +351,24 @@ void PhysicalW65C02::tick_cycle(BusInState state) {
 }
 
 void PhysicalW65C02::tick_cycle_fetch(BusInState state) {
-	++pc;
-
 	assert(seq_cycle == 0);
+
+    if (prev_nmi_state && !state.nmib) {
+        in_nmi = true;
+        in_irq = false;
+
+        mode = Mode::STACK_BRK;
+        oper = W65C02S_OPER_BRK;
+        return;
+    } else if ((p & FLAG_I_MASK) == 0 && !state.irqb) {
+        in_irq = true;
+
+        mode = Mode::STACK_BRK;
+        oper = W65C02S_OPER_BRK;
+        return;
+    }
+
+	++pc;
 
 #define W65C02S_OPCODE(OPC, MODE, OPER) case OPC: mode = Mode::MODE; oper = (Oper)OPER; break;
 	switch (state.data) {
@@ -354,9 +379,16 @@ void PhysicalW65C02::tick_cycle_fetch(BusInState state) {
 
 void PhysicalW65C02::get_bus_state(BusState& out) const {
 	out.sync = false;
-	out.vpb  = false;
+	out.vpb  = true;
 	out.rwb  = rwb_read;
-    out.data = 0xFF;
+    out.addr = 0x0000;
+    out.data = 0x00;
+    out.error = false;
+
+    if (error) {
+        out.error = true;
+        return;
+    }
 
 	switch (mode) {
 		case Mode::FETCH: get_bus_state_fetch(out); break;
@@ -386,7 +418,7 @@ void PhysicalW65C02::get_bus_state(BusState& out) const {
 		case Mode::ABSOLUTE_INDIRECT: get_bus_state_absolute_indirect(out); break; 
 		case Mode::ABSOLUTE_INDIRECT_X: get_bus_state_absolute_indirect_x(out); break; 
 		case Mode::RELATIVE: get_bus_state_relative(out); break; 
-		case Mode::RELATIVE_BIT: assert(false && "TODO: RELATIVE_BIT"); break; 
+		case Mode::RELATIVE_BIT: out.error = true; break; 
 		case Mode::RMW_ZEROPAGE: get_bus_state_rmw_zeropage(out); break; 
 		case Mode::RMW_ZEROPAGE_X: get_bus_state_rmw_zeropage_x(out); break; 
 		case Mode::RMW_ABSOLUTE: get_bus_state_rmw_absolute(out); break; 
@@ -398,10 +430,10 @@ void PhysicalW65C02::get_bus_state(BusState& out) const {
 		case Mode::STACK_PUSH: get_bus_state_stack_push(out); break; 
 		case Mode::STACK_PULL: get_bus_state_stack_pull(out); break; 
 		case Mode::STACK_RTI: get_bus_state_stack_rti(out); break; 
-		case Mode::NOP_5C: assert(false && "TODO: C"); break; 
-		case Mode::INT_WAIT_STOP: assert(false && "TODO: INT_WAIT_STOP"); break; 
+		case Mode::NOP_5C: out.error = true; break; 
+		case Mode::INT_WAIT_STOP: out.error = true; break; 
 
-		default: assert(false);
+		default: out.error = true;
 	}
 }
 
@@ -963,7 +995,7 @@ void PhysicalW65C02::tick_cycle_relative(BusInState state) {
                 seq_cycle = -1;
             }
             break;
-        case 2: if (!crosses_boundary_s(pc, bal)) { seq_cycle = -1; } pc += bal; break;
+        case 2: if (!crosses_boundary_s(pc, bal)) { seq_cycle = -1; } pc += (int8_t)bal; break;
         case 3: seq_cycle = -1;                                                break;
         default: UNREACHABLE();
     }
@@ -977,24 +1009,43 @@ void PhysicalW65C02::get_bus_state_relative(BusState& out) const {
 }
 
 void PhysicalW65C02::tick_cycle_stack_brk(BusInState state) {
+    bool is_brk = (!in_rst && !in_nmi && !in_irq);
+
     switch (seq_cycle) {
-        case 1: ++pc;                                   break;
+        case 1: if (is_brk) { ++pc; }                   break;
         case 2: --s;                                    break;
         case 3: --s;                                    break;
         case 4: --s;                                    break;
         case 5: pc = (pc & 0xFF00) | (state.data << 0); break;
-        case 6: pc = (pc & 0x00FF) | (state.data << 8); p &= ~FLAG_D_MASK; p |= FLAG_I_MASK; seq_cycle = -1; break; // TODO: CHECK I?
+        case 6: pc = (pc & 0x00FF) | (state.data << 8); p &= ~FLAG_D_MASK; p |= FLAG_I_MASK; seq_cycle = -1;
+            in_rst = false;
+            in_nmi = false;
+            in_irq = false;
+            break; // TODO: CHECK I?
         default: UNREACHABLE();
     }
 }
 void PhysicalW65C02::get_bus_state_stack_brk(BusState& out) const {
+    bool is_brk = (!in_rst && !in_nmi && !in_irq);
+
+    uint16_t vector;
+    if (in_rst) {
+        vector = 0xFFFC;
+    } else if (in_nmi) {
+        vector = 0xFFFA;
+    } else {
+        vector = 0xFFFE;
+    }
+
+    bool rwb = (in_rst ? rwb_read : rwb_write);
+
 	switch (seq_cycle) {
 		case 1: out.addr = pc;                                                    break;
-		case 2: out.addr = 0x0100 | s; out.rwb = rwb_write; out.data = ((pc >> 8) & 0xFF); break;
-		case 3: out.addr = 0x0100 | s; out.rwb = rwb_write; out.data = ((pc >> 0) & 0xFF); break;
-		case 4: out.addr = 0x0100 | s; out.rwb = rwb_write; out.data = p | FLAG_B_MASK;    break;
-		case 5: out.addr = 0xFFFE;                                                break;
-		case 6: out.addr = 0xFFFF;                                                break;
+		case 2: out.addr = 0x0100 | s; out.rwb = rwb; out.data = ((pc >> 8) & 0xFF);           break;
+		case 3: out.addr = 0x0100 | s; out.rwb = rwb; out.data = ((pc >> 0) & 0xFF);           break;
+		case 4: out.addr = 0x0100 | s; out.rwb = rwb; out.data = is_brk ? p | FLAG_B_MASK : p; break;
+		case 5: out.addr = vector + 0; out.vpb = false;                                break;
+		case 6: out.addr = vector + 1; out.vpb = false;                                break;
         default: UNREACHABLE();
 	}
 }

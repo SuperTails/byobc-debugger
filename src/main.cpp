@@ -275,11 +275,15 @@ Action handle_commands(PhysicalW65C02 &cpu, bool phi2) {
 
       uart::put(NUM_BREAKPOINTS);
       BREAKPOINTS[NUM_BREAKPOINTS].addr = cmd.set_breakpoint.addr;
+      BREAKPOINTS[NUM_BREAKPOINTS].enabled = true;
       ++NUM_BREAKPOINTS;
       break;
     case CommandType::ResetCpu:
       RESB_PORT.OUTCLR = RESB_PIN_MASK;
       WAIT = Wait::HalfCycle;
+      cpu.error = false;
+      cpu.mode = physicalw65c02::Mode::IMPLIED;
+      cpu.oper = physicalw65c02::Oper::W65C02S_OPER_NOP;
       break;
     case CommandType::GetBusState: {
       BusState state = {
@@ -315,7 +319,9 @@ Action handle_commands(PhysicalW65C02 &cpu, bool phi2) {
       CpuState state;
       state.addr = bus_state.addr;
       state.data = (bus_state.rwb ? gpio::read_data_bus() : bus_state.data);
-      state.status = (bus_state.rwb << 0) | (bus_state.sync << 1) | (bus_state.vpb << 2) | (phi2 << 3);
+      state.status =
+        (bus_state.rwb << 0) | (bus_state.sync << 1) | (bus_state.vpb << 2) | (phi2 << 3) |
+        (cpu.in_rst << 4) | (cpu.in_nmi << 5) | (cpu.in_rst << 6) | (bus_state.error << 7);
 
       state.pc = cpu.pc;
       state.a = cpu.a;
@@ -484,9 +490,7 @@ void setup() {
 
     ++cycle;
 
-    if (cycle != 1) {
-      cpu.tick_cycle({ gpio::read_data_bus(), status.resb(), status.irqb(), status.nmib() });
-    }
+    cpu.tick_cycle({ gpio::read_data_bus(), status.resb(), status.irqb(), status.nmib() });
 
     gpio::write_phi2(false);
 
@@ -501,6 +505,10 @@ void setup() {
     physicalw65c02::BusState cpu_bus_state;
     cpu.get_bus_state(cpu_bus_state);
 
+    if (cpu_bus_state.error) {
+      WAIT = Wait::HalfCycle;
+      hit_breakpoint(0xFF);
+    }
 
     // Address and control lines change immediately after the falling edge of PHI2.
     gpio::write_addr_bus(cpu_bus_state.addr);

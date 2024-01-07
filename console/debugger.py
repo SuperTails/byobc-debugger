@@ -8,6 +8,7 @@ from disasm import AddrMode, DecodeError
 import disasm
 import dasm
 import copy
+import argparse
 
 def update_crc(crc_accum: int, data: bytes) -> int:
     crc_table = [
@@ -83,6 +84,12 @@ class CpuState:
     vpb:  bool
     phi2: bool
 
+    in_rst: bool
+    in_nmi: bool
+    in_irq: bool
+
+    error: bool
+
     mode: int
     oper: int
     seq_cycle: int
@@ -102,16 +109,20 @@ class CpuState:
 
         status = int.from_bytes(b[10:11], 'little')
 
-        rwb  = (status & (1 << 0)) != 0
-        sync = (status & (1 << 1)) != 0
-        vpb  = (status & (1 << 2)) != 0
-        phi2 = (status & (1 << 3)) != 0
+        rwb    = (status & (1 << 0)) != 0
+        sync   = (status & (1 << 1)) != 0
+        vpb    = (status & (1 << 2)) != 0
+        phi2   = (status & (1 << 3)) != 0
+        in_rst = (status & (1 << 4)) != 0
+        in_nmi = (status & (1 << 5)) != 0
+        in_irq = (status & (1 << 6)) != 0
+        error  = (status & (1 << 7)) != 0
 
         mode = int.from_bytes(b[13:14], 'little')
         oper = int.from_bytes(b[14:15], 'little')
         seq_cycle = int.from_bytes(b[15:16], 'little')
 
-        return cls(addr, data, pc, a, x, y, s, p, rwb, sync, vpb, phi2, mode, oper, seq_cycle)
+        return cls(addr, data, pc, a, x, y, s, p, rwb, sync, vpb, phi2, in_rst, in_nmi, in_irq, error, mode, oper, seq_cycle)
 
 @dataclass
 class BusState:
@@ -206,8 +217,6 @@ class VersionInfo:
 class Debugger:
     def __init__(self, port, timeout):
         self.port = PortWrapper(port, timeout)
-        self.cpu = Cpu()
-        self.cpu.next_state = Cpu()
     
     def start_command(self, b: bytes):
         assert(len(b) == 1)
@@ -219,7 +228,7 @@ class Debugger:
     @classmethod
     def open(cls, path):
         port = Serial(path, 115200, timeout=0.0)
-        return cls(port, 5.0)
+        return cls(port, 3.0)
 
     def ping(self) -> bytes:
         self.start_command(CMD_PING)
@@ -319,7 +328,6 @@ class Debugger:
 
     def reset_cpu(self):
         self.start_command(CMD_RESET_CPU)
-        self.cpu.reset()
     
     def get_bus_state(self) -> BusState:
         self.start_command(CMD_GET_BUS_STATE)
@@ -342,46 +350,22 @@ class Debugger:
     
     def step(self):
         while True:
+            self.poll_breakpoint()
             self.step_cycle()
+            self.poll_breakpoint()
             state = self.get_cpu_state()
             if state.sync:
                 break
         
-    def step_half_no_update(self):
-        self.start_command(CMD_STEP_HALF_CYCLE)
-    
-    def update_on_state(self):
-        state = self.get_bus_state()
-        self.cpu.update(state)
-    
     def step_half_cycle(self):
         self.start_command(CMD_STEP_HALF_CYCLE)
-        state = self.get_bus_state()
-        self.cpu.update(state)
     
     def step_cycle(self):
-        #self.start_command(CMD_STEP_CYCLE)
-        #state = self.get_bus_state()
-        #self.cpu.update(state)
         self.step_half_cycle()
         self.step_half_cycle()
     
     def cont(self):
         self.start_command(CMD_CONTINUE)
-        self.cpu.reset()
-
-class AddrConstraint(Enum):
-    Pc = 0
-
-class DataConstraint(Enum):
-    A = 0
-    X = 1
-    Y = 2
-    
-class Phase(Enum):
-    Fetch = 0
-    Load = 1
-    Execute = 2
 
 def are_different_or_none(lhs, rhs):
     if lhs is None:
@@ -393,486 +377,134 @@ def are_different_or_none(lhs, rhs):
 def byte_to_signed(b: int):
     return int.from_bytes(b.to_bytes(1, 'little'), 'little', signed=True)
 
-@dataclass
-class Cpu:
-    pc: Optional[int]
-
-    a: Optional[int]
-    x: Optional[int]
-    y: Optional[int]
-    s: Optional[int]
-
-    p: int
-    p_mask: int
-
-    ir: int
-    time: int
-    phase: Phase
-
-    cycle_known: bool
-
-    next_state: Optional['Cpu']
-
-    def __init__(self, nested=True):
-        self.reset(nested)
+def do_deploy_bin(args):
+    return do_deploy(args, is_bin=True)
     
-    def do_fetch(self, addr: int, data: int):
-        next_state = Cpu(nested=False)
+def do_deploy(args, is_bin=False):
+    if is_bin:
+        if args.file.lower().endswith('.s'):
+            print('Warning: .S files usually are text, not binary, and should not be used with --bin!')
+            response = input("Are you sure you want to flash this file? (y/n): ")
+            response = response.strip().lower()
+            if response != 'y':
+                print('Canceled')
+                return
 
-        next_state.pc = (addr + 1) & 0xFFFF
-
-        next_state.a = self.a
-        next_state.x = self.x
-        next_state.y = self.y
-        next_state.s = self.s
-        next_state.p = self.p
-        next_state.p_mask = self.p_mask
-
-        next_state.ir = data
-        next_state.time = 0
-        next_state.phase = Phase.Load
-        if next_state.addr_mode() in ('#', 'impl'):
-            next_state.phase = Phase.Execute
-        next_state.cycle_known = True
-
-        return next_state
-    
-    def do_load(self):
-        assert(self.cycle_known)
-
-        next_state = Cpu(nested=False)
-
-        next_state.a = self.a
-        next_state.x = self.x
-        next_state.y = self.y
-        next_state.s = self.s
-        next_state.p = self.p
-        next_state.p_mask = self.p_mask
-
-        next_state.ir = self.ir
-        next_state.time = self.time + 1
-        next_state.phase = Phase.Execute
-        next_state.cycle_known = True
-
-        done = False
-
-        STORE_OR_RMW = (
-            'STA', 'STX', 'STY',
-            'ASL', 'DEC', 'INC', 'LSR', 'ROL', 'ROR',
-        )
-
-        op = self.opcode()
-        am = self.addr_mode()
-        if am == 'zpg':
-            if self.time == 0:
-                done = True
-                next_state.pc = self.pc_plus(1)
-        elif am == 'abs':
-            if self.time == 1:
-                done = True
-                next_state.pc = self.pc_plus(2)
-        elif am == 'ind,X':
-            if self.time == 0:
-                # Access base zpg address BAL
-                pass
-            elif self.time == 2:
-                # Access ADL at BAL + X
-                pass
-            elif self.time == 3:
-                # Access ADH at BAL + X (+ 1)
-                done = True
-                next_state.pc = self.pc_plus(1)
-        elif am == 'abs,X' or am ==  'abs,Y':
-            if self.time == 0:
-                # Access BAL
-                pass
-            elif self.time == 1 and self.opcode not in STORE_OR_RMW:
-                # Access BAH
-                print('TODO: ABS,X OR ABS,Y ADDRESSING MODE COULD END HERE')
-            elif self.time == 2:
-                # Compute carry
-                done = True
-                next_state.pc = self.pc_plus(2)
-        elif am == 'ind,Y':
-            if self.time == 0:
-                # Read IAL
-                pass
-            elif self.time == 1:
-                # Access BAL, at IAL
-                pass
-            elif self.time == 2 and self.opcode not in STORE_OR_RMW:
-                # Access BAH, at IAL + 1
-                print('TODO: IND,Y ADDRESSING MODE COULD END HERE')
-            elif self.time == 3:
-                # Compute carry
-                done = True
-                next_state.pc = self.pc_plus(1)
-        elif am == 'zpg,X' or am == 'zpg,Y':
-            if self.time == 0:
-                # Read BAL
-                pass
-            elif self.time == 1:
-                # Access BAL (discarded) 
-                done = True
-                next_state.pc = self.pc_plus(1)
-        elif am == '#' or am == 'impl':
-            raise Exception('immediate or implied mode does not have a load phase')
-        else:
-            print(f'unknown addressing mode {am}')
-    
-        if done:
-            next_state.phase = Phase.Execute
-            next_state.time = 0
-        
-        return next_state
-    
-    def do_execute(self, addr: int, data: int):
-        assert(self.cycle_known)
-
-        next_state = Cpu(nested=False)
-
-        next_state.a = self.a
-        next_state.x = self.x
-        next_state.y = self.y
-        next_state.s = self.s
-        next_state.p = self.p
-        next_state.p_mask = self.p_mask
-
-        next_state.ir = self.ir
-        next_state.time = 0
-        next_state.phase = Phase.Execute
-        next_state.cycle_known = True
-
-        c = self.opcode()
-        if c == 'TXS':
-            next_state.s = self.x
-            next_state.phase = Phase.Fetch
-        elif c == 'TAX':
-            next_state.x = self.a
-            next_state.phase = Phase.Fetch
-        elif c == 'TXA':
-            next_state.a = self.x
-            next_state.phase = Phase.Fetch
-        elif c == 'TAY':
-            next_state.y = self.a
-            next_state.phase = Phase.Fetch
-        elif c == 'TYA':
-            next_state.a = self.y
-            next_state.phase = Phase.Fetch
-        elif c == 'NOP':
-            next_state.phase = Phase.Fetch
-        elif c == 'DEX':
-            next_state.x = ((self.x - 1) & 0xFF) if self.x is not None else None
-            next_state.update_flags_nz(next_state.x)
-            next_state.phase = Phase.Fetch
-        elif c == 'INX':
-            next_state.x = ((self.x + 1) & 0xFF) if self.x is not None else None
-            next_state.update_flags_nz(next_state.x)
-            next_state.phase = Phase.Fetch
-        elif c == 'DEY':
-            next_state.y = ((self.y - 1) & 0xFF) if self.y is not None else None
-            next_state.update_flags_nz(next_state.y)
-            next_state.phase = Phase.Fetch
-        elif c == 'INY':
-            next_state.y = ((self.y + 1) & 0xFF) if self.y is not None else None
-            next_state.update_flags_nz(next_state.y)
-            next_state.phase = Phase.Fetch
-        elif c == 'ADC':
-            if self.a is not None and (self.p_mask & 0b0000_0001) != 0:
-                c = self.p & 0x1
-                a = (self.a + data + c)
-                next_state.a = a & 0xFF
-                next_state.update_flag_v((self.a ^ a) & (data ^ a) & 0x80 != 0)
-                next_state.update_flag_c(a & 0x100 != 0)
-                next_state.update_flags_nz(next_state.a)
-            else:
-                next_state.a = None
-                next_state.unknown_flags()
-        elif c == 'AND':
-            next_state.a = (self.a & data) if self.a is not None else None
-            next_state.update_flags_nz(next_state.a)
-        elif c == 'BIT':
-            # TODO:
-            self.unknown_flags()
-        elif c == 'CMP':
-            # TODO:
-            self.unknown_flags()
-        elif c == 'CPX':
-            # TODO:
-            self.unknown_flags()
-        elif c == 'CPY':
-            # TODO:
-            self.unknown_flags()
-        elif c == 'EOR':
-            next_state.a = (self.a ^ data) if self.a is not None else None
-            next_state.update_flags_nz(next_state.a)
-        elif c == 'LDA':
-            next_state.a = data
-            next_state.update_flags_nz(next_state.a)
-            next_state.phase = Phase.Fetch
-        elif c == 'LDX':
-            next_state.x = data
-            next_state.update_flags_nz(next_state.x)
-            next_state.phase = Phase.Fetch
-        elif c == 'LDY':
-            next_state.y = data
-            next_state.update_flags_nz(next_state.y)
-            next_state.phase = Phase.Fetch
-        elif c == 'ORA':
-            next_state.a = (self.a | data) if self.a is not None else None
-            next_state.update_flags_nz(next_state.a)
-        elif c == 'SBC':
-            # TODO:
-            self.a = None
-            self.unknown_flags()
-        elif c == 'CLC':
-            next_state.update_flag_c(0)
-        elif c == 'SEC':
-            next_state.update_flag_c(1)
-        elif c == 'CLV':
-            next_state.update_flag_v(0)
-        
-        return next_state
-    
-    def pc_plus(self, value: int):
-        if self.pc is not None:
-            return (self.pc + value) & 0xFFFF
-        else:
-            return None
-
-    '''
-    def use_next_state(self):
-        assert(self.next_state is not None)
-        if are_different_or_none(self.pc, self.next_state.pc):
-            print(f'warning: mismatch in PC (expected {self.pc:04X}, actual {self.next_state.pc:04X})')
-        self.pc = self.next_state.pc
-        if are_different_or_none(self.a, self.next_state.a):
-            print(f'warning: mismatch in A (expected {self.a:02X}, actual {})')
-        if self.pc is not None and self.next_state.pc is not None and self.next_state.pc
-    '''
-
-    def use_next_state(self):
-        assert(self.next_state is not None)
-
-        self.pc = self.next_state.pc
-        
-        self.a = self.next_state.a
-        self.x = self.next_state.x
-        self.y = self.next_state.y
-        self.s = self.next_state.s
-        self.p = self.next_state.p
-
-        self.ir = self.next_state.ir
-        self.time = self.next_state.time
-        self.phase = self.next_state.phase
-        self.cycle_known = self.next_state.cycle_known
-    
-    def reset(self, nested=True):
-        self.pc = None
-        self.a = None
-        self.x = None
-        self.y = None
-        self.s = None
-        self.p = 0
-        self.p_mask = 0
-        self.ir = 0
-        self.time = 0
-        self.phase = Phase.Fetch
-        self.cycle_known = False
-        if nested:
-            self.next_state = Cpu(nested=False)
-    
-    def bus_state_constraints(self):
-        if self.phase == Phase.Fetch:
-            return AddrConstraint.Pc, None
-
-        if self.ir is None:
-            return None, None
-
-        if self.phase == Phase.Load:
-            am = self.addr_mode()
-            if am == 'zpg':
-                return AddrConstraint.Pc, None
-            elif am == 'abs':
-                return AddrConstraint.Pc, None
-        
-        if self.phase == Phase.Execute:
-            c = self.opcode()
-            if c == 'STA' or c == 'LDA':
-                return None, DataConstraint.A
-            elif c == 'STX' or c == 'LDX':
-                return None, DataConstraint.X
-            elif c == 'STY' or c == 'LDY':
-                return None, DataConstraint.Y
-        
-        return None, None
-    
-    def apply_constraints(self, bus_state: BusState):
-        addr_cons, data_cons = self.bus_state_constraints()
-        if addr_cons == AddrConstraint.Pc:
-            self.pc = bus_state.addr
-        
-        if data_cons == DataConstraint.A:
-            self.a = bus_state.data
-        elif data_cons == DataConstraint.X:
-            self.x = bus_state.data
-        elif data_cons == DataConstraint.Y:
-            self.y = bus_state.data
-    
-    def opcode(self):
-        if self.ir is None:
-            return None
-
+        with open(args.file, 'rb') as f:
+            bin_data = f.read()
+        chunks = dasm.get_chunks(bin_data)
+    else:
         try:
-            c, _ = disasm.get_modes(self.ir)
-            return c
-        except DecodeError:
-            return None
+            output = dasm.AssembledFile.from_src(args.dasm, args.file, args.out_dir)
+            chunks = output.chunks
+        except dasm.AssemblerError:
+            print(f'Encountered errors while assembling file')
+            sys.exit(1)
 
-    def addr_mode(self):
-        if self.ir is None:
-            return None
-        
+    print('Connecting to debugger')
+    dbg = Debugger.open(args.port)
+    try:
+        print(f'Firmware version: {dbg.print_info()}')
+        print('Successfully connected to debugger!')
+    except TimeoutError:
         try:
-            _, m = disasm.get_modes(self.ir)
-            return m
-        except DecodeError:
-            return None
-    
-    def update_flag_c(self, c):
-        self.p_mask |= 0b0000_0001
-        self.p &= ~0b0000_0001
-        if c:
-            self.p |= 0b0000_0001
-    
-    def update_flag_v(self, v):
-        self.p_mask |= 0b0100_0000
-        self.p &= ~0b0100_0000
-        if v:
-            self.p |= 0b0100_0000
-    
-    def update_flags_nz(self, value: Optional[int]):
-        if value is not None:
-            n = byte_to_signed(value) < 0
-            z = value == 0
-            self.p_mask |= 0b1000_0010
-            self.p &= ~0b1000_0010
-            self.p |= (+n) << 7
-            self.p |= (+z) << 1
-        else:
-            self.p_mask &= ~0b1000_0010
-
-    def unknown_flags(self):
-        self.p_mask = 0b0000_0000
-
-    def update(self, state: BusState):
-        if not state.phi2:
+            print(f'Firmware version: {dbg.print_info()}')
+            print('Successfully connected to debugger')
+        except TimeoutError:
+            print('Timed out while trying to connect to debugger')
             return
 
-        assert(self.next_state is not None)
-        self.use_next_state()
+    bad_chunks = []
+    for chunk in chunks:
+        if not (0 <= chunk.base_addr <= 0xFFFF):
+            raise Exception(f'Invalid chunk address {chunk.base_addr}')
+        if chunk.base_addr < 0x8000:
+            bad_chunks.append(chunk)
 
-        if state.sync:
-            self.phase = Phase.Fetch
-        self.apply_constraints(state)
-        
-        if self.phase == Phase.Fetch:
-            self.next_state = self.do_fetch(state.addr, state.data)
-        elif self.phase == Phase.Load:
-            self.next_state = self.do_load()
-        elif self.phase == Phase.Execute:
-            self.next_state = self.do_execute(state.addr, state.data)
+    if len(bad_chunks) != 0:
+        print('Warning: found chunks that were outside of the normal EEPROM range!')
+        for chunk in bad_chunks:
+            print(f'  {chunk.base_addr:04X}')
 
-    def display(self):
-        result = 'PC: '
-        if self.pc is not None:
-            result += f'{self.pc:04X}'
-        else:
-            result += '????'
-        
-        result += '  A: '
-        if self.a is not None:
-            result += f'{self.a:02X}'
-        else:
-            result += '??'
-        
-        result += '  X: '
-        if self.x is not None:
-            result += f'{self.x:02X}'
-        else:
-            result += '??'
-        
-        result += '  Y: '
-        if self.y is not None:
-            result += f'{self.y:02X}'
-        else:
-            result += '??'
-        
-        '''
-        result += '  IR: '
-        if self.ir is not None:
-            result += f'{self.ir:02X}'
-            pair = disasm.get_modes(self.ir)
-            if pair is not None:
-                result += f' ({pair[0]} {pair[1]})'
-        else:
-            result += '??'
-        
-        result += f' {self.phase} {self.time} {self.next_state.phase}'
-        '''
+        print("This normally means you're trying to flash something that isn't a binary,")
+        print("or you've accidentally included your variables in the output.")
+        response = input("Do you want to continue? (y/n): ")
+        response = response.strip().lower()
+        if response != 'y':
+            print('Canceled')
+            return
 
-        return result
+    print('Flashing EEPROM')
+    total_pages = sum((len(c.data) + EEPROM_PAGE_SIZE - 1) // EEPROM_PAGE_SIZE for c in chunks)
+    print(f'Need to flash {total_pages} pages')
 
-def main():
-    port = None
+    for i, chunk1 in enumerate(chunks):
+        for chunk2 in chunks[i + 1:]:
+            c1_start = chunk1.base_addr // EEPROM_PAGE_SIZE
+            c1_end = (chunk1.base_addr + len(chunk1.data) + EEPROM_PAGE_SIZE - 1) // EEPROM_PAGE_SIZE
 
-    argv = copy.copy(sys.argv)
-    i = 0
-    while i < len(argv):
-        if argv[i].startswith('--port='):
-            port = argv[i][len('--port='):]
-            del argv[i]
-        else:
-            i += 1
+            c2_start = chunk2.base_addr // EEPROM_PAGE_SIZE
+            c2_end = (chunk2.base_addr + len(chunk2.data) + EEPROM_PAGE_SIZE - 1) // EEPROM_PAGE_SIZE
+
+            if max(c1_start, c2_start) <= min(c1_end, c2_end):
+                raise Exception('TODO: Overlapping chunks')
     
-    if port is None:
-        print('Must specify a port for the debugger using --port=<port>')
-        sys.exit(1)
-
-    if len(argv) > 3:
-        print('Too many arguments')
-        print('Usage: debugger.py [options] [asm listing file] [asm symbol table]')
-        sys.exit(1)
-    if len(argv) == 2:
-        print('Must provide both listing file and symbol table (or neither)')
-        print('Usage: debugger.py [options] [asm listing file] [asm symbol table]')
-        sys.exit(1)
+    for chunk in chunks:
+        base_addr = chunk.base_addr & ~EEPROM_PAGE_MASK
+        data = copy.copy(chunk.data)
+        if chunk.base_addr & EEPROM_PAGE_MASK != 0:
+            data = b'\xFF' * (chunk.base_addr & EEPROM_PAGE_MASK) + data
+        while len(data) & EEPROM_PAGE_MASK != 0:
+            data = data + b'\xFF'
+        
+        for page in range(0, len(data), EEPROM_PAGE_SIZE):
+            dbg.page_write(base_addr + page, data[page:][:EEPROM_PAGE_SIZE])
+            print('.', end='', flush=True)
+    print()
     
-    if len(argv) == 3:
-        lst_file_path = argv[1]
-        with open(lst_file_path, 'r') as f:
+    print('Resetting CPU')
+
+    dbg.reset_cpu()
+
+    print('Done!')
+
+
+    pass
+
+def do_debug(args):
+    try:
+        with open('asm.lst', 'r') as f:
             lst_data = f.read()
         listing = dasm.Listing(lst_data)
-
-        sym_file_path = argv[2]
-        with open(sym_file_path, 'r') as f:
+    except Exception:
+        listing = None
+        print('Could not open listing file asm.lst')
+    
+    try:
+        with open('asm.sym', 'r') as f:
             sym_data = f.read()
         symbol_table = dasm.SymbolTable(sym_data)
-
-        print(f'Loaded debug info for file {listing.file_name}')
-    else:
-        listing = None
+    except Exception:
         symbol_table = None
+        print('Could not open symbol table asm.sym')
+    
+    if listing is not None and symbol_table is not None:
+        print(f'Loaded debug info for file {listing.file_name}')
 
-    dbg = Debugger.open(port)
+    dbg = Debugger.open(args.port)
 
-    #print(dbg.port.read_exact(1))
-    #sys.exit(1)
-
-    info = dbg.print_info()
-    print('Connected to debugger')
-    print(f'Firmware version: {info}')
-    print('Successfully connected to debugger!')
+    print('Connecting to debugger')
+    dbg = Debugger.open(args.port)
+    try:
+        print(f'Firmware version: {dbg.print_info()}')
+        print('Successfully connected to debugger!')
+    except TimeoutError:
+        try:
+            print(f'Firmware version: {dbg.print_info()}')
+            print('Successfully connected to debugger')
+        except TimeoutError:
+            print('Timed out while trying to connect to debugger')
+            return
 
     dbg.reset_cpu()
 
@@ -885,15 +517,15 @@ def main():
             try:
                 while True:
                     if walking:
-                        dbg.step_half_no_update()
+                        dbg.step_half_cycle()
 
                     which_breakpoint = dbg.poll_breakpoint()
 
-                    if walking:
-                        dbg.update_on_state()
-
                     if which_breakpoint is not None:
-                        print(f'Hit breakpoint {which_breakpoint}, stopping')
+                        if which_breakpoint == 0xFF:
+                            print(f'CPU encountered error, stopping')
+                        else:
+                            print(f'Hit breakpoint {which_breakpoint}, stopping')
                         break
                     
                     time.sleep(0.1)
@@ -905,19 +537,26 @@ def main():
             walking = False
 
         state = dbg.get_bus_state()
-        if dbg.cpu.pc is not None and listing is not None:
-            for line in listing.neighborhood(dbg.cpu.pc):
+        cpu_state = dbg.get_cpu_state()
+
+        if cpu_state.pc is not None and listing is not None:
+            for line in listing.neighborhood(cpu_state.pc):
                 print(f'${line.address:04X} {line.line_number:6}: ', end='')
-                if dbg.cpu.pc == line.address:
+                if cpu_state.pc == line.address:
                     print(' -> ', end='')
                 else:
                     print('    ', end='')
                 print(line.source)
-        
-        cpu_state = dbg.get_cpu_state()
+
 
         print()
-        #print(dbg.cpu.display())
+        if cpu_state.in_rst:
+            print('RST')
+        elif cpu_state.in_nmi:
+            print('NMI')
+        elif cpu_state.in_irq:
+            print('IRQ')
+
         print(f'PC: {cpu_state.pc:04X}  A: {cpu_state.a:02X} X: {cpu_state.x:02X} Y: {cpu_state.y:02X} P: {cpu_state.p:02X} S: {cpu_state.s:02X} seq_cycle: {cpu_state.seq_cycle}')
         print(f'ADDR: {cpu_state.addr:04X}')
         print(f'DATA:   {cpu_state.data:02X}')
@@ -930,10 +569,10 @@ def main():
         print('vpb:1 ' if cpu_state.vpb  else 'VPB:0 ', end='')
         print('   |   ', end='')
         print(f'PHI2: {+cpu_state.phi2}')
-        print(cpu_state.mode)
-        print(cpu_state.oper)
-        print(cpu_state.seq_cycle)
         print()
+
+        if cpu_state.error:
+            print('ERROR')
 
         '''
         print()
@@ -967,12 +606,15 @@ def main():
                 pass
             elif cmd in ('s', 'step'):
                 free_running = False
+                dbg.poll_breakpoint()
                 dbg.step()
             elif cmd in ('h', 'stephalf'):
                 free_running = False
+                dbg.poll_breakpoint()
                 dbg.step_half_cycle()
             elif cmd in ('y', 'stepcycle'):
                 free_running = False
+                dbg.poll_breakpoint()
                 dbg.step_cycle()
             elif cmd in ('c', 'continue'):
                 free_running = True
@@ -1013,6 +655,36 @@ def main():
             print(f'Error while executing command: {e}')
     
     print('Debugger exited')
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog='debugger.py',
+        description='Connects to an external 98-341 debugger',
+    )
+
+    subparsers = parser.add_subparsers(help='Action to take', required=True)
+
+    parser_deploy = subparsers.add_parser('deploy', help='Assemble and upload a new program')
+    parser_deploy.add_argument('--port', required=True, help='Path to the debugger port')
+    parser_deploy.add_argument('--dasm', required=True, help='Path to the dasm executable')
+    parser_deploy.add_argument('file', help='Path to the assembly file')
+    parser_deploy.add_argument('--out-dir', help='Path to place the assembled files', default='./')
+    parser_deploy.set_defaults(func=do_deploy)
+
+    parser_deploy_bin = subparsers.add_parser('deploy-bin', help='Upload an already-assembled program')
+    parser_deploy_bin.add_argument('--port', required=True, help='Path to the debugger port')
+    parser_deploy_bin.add_argument('file', help='Path to the binary file')
+    parser_deploy_bin.set_defaults(func=do_deploy_bin)
+
+    parser_debug = subparsers.add_parser('debug', help='Run and debug code')
+    parser_debug.add_argument('--port', required=True, help='Path to the debugger port')
+    parser_debug.set_defaults(func=do_debug)
+
+    args = parser.parse_args()
+
+    args.func(args)
+
+    return
 
 if __name__ == '__main__':
     main()

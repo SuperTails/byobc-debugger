@@ -146,6 +146,7 @@ struct BusState {
     bool sync;
     bool rwb;
     bool vpb;
+    bool error;
 };
 
 struct BusInState {
@@ -162,7 +163,7 @@ public:
 	uint8_t y;   // Y Index Register
 	uint8_t s;   // Stack Pointer
 	uint8_t p = (FLAG_I_MASK | (1 << 5));	 // Processor Status Register
-	uint16_t pc = 0x8000; // Program Counter
+	uint16_t pc; // Program Counter
 
     // The half-cycle count within the current instruction.
     // If this is 0 or 1 the processor is always in fetch or interrupt mode.
@@ -171,9 +172,17 @@ public:
     // The current execution mode of the processor.
     // When the halfcycle is 0 or 1, this either fetching or handling an interrupt.
     // Fetch mode will change to the appropriate addressing mode once the instruction has been fetched.
-    Mode mode = Mode::FETCH;
+    Mode mode;
 
     Oper oper;
+
+    bool prev_nmi_state = false;
+
+    bool in_rst = false;
+    bool in_nmi = false;
+    bool in_irq = false;
+
+    bool error = false;
 
     // Advances the processor by one halfcycle.
     void tick_cycle(BusInState state);
