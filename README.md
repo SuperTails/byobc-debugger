@@ -31,7 +31,7 @@ so you will probably have to do this step each time you begin.
 Once you know the port for your debugger, just run `debugger.py` to start debugging.
 
 ```bash
-$ python3 ./console/debugger.py --port=path/to/port/goes/here
+$ python3 ./console/debugger.py debug --port=path/to/port/goes/here
 ```
 
 The commands that can be used for the debugger are in section 3.
@@ -72,7 +72,7 @@ To deploy your code to the EEPROM, first make sure that your debugger is plugged
 Then use the `deploy.py` script as follows:
 
 ```bash
-$ python3 ./console/deploy.py --port=path/to/debugger/port --dasm=path/to/dasm/executable path/to/code.S
+$ python3 ./console/debugger.py deploy --port=path/to/debugger/port --dasm=path/to/dasm/executable path/to/code.S
 ```
 
 This will use DASM to compile your program, and then flash the resulting binary to the EEPROM.
@@ -82,11 +82,7 @@ The compiled program will be stored as three files in the root directory:
 - `asm.sym`, which contains the addresses of all the labels in your program.
 
 The debugger can parse these files to show you the instructions as they are written in your program,
-similar to gdb's source view. To do this, simply pass them in when starting the debugger:
-
-```bash
-$ python3 ./console/debugger.py --port=path/to/debugger/port asm.lst asm.sym
-```
+similar to gdb's source view. This is automatic as long as `asm.lst` and `asm.sym` are up to date.
 
 ## 3. Debugger Commands and Usage
 
