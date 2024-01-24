@@ -491,8 +491,6 @@ def do_debug(args):
     if listing is not None and symbol_table is not None:
         print(f'Loaded debug info for file {listing.file_name}')
 
-    dbg = Debugger.open(args.port)
-
     print('Connecting to debugger')
     dbg = Debugger.open(args.port)
     try:
