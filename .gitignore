@@ -5,6 +5,8 @@
 .vscode/ipch
 .vscode/settings.json
 
+console/__pycache__
+
 img.out
 img.bin
 
