@@ -66,6 +66,7 @@ CMD_CONTINUE = b'\x0A'
 CMD_HIT_BREAKPOINT = b'\x0B'
 CMD_PRINT_INFO = b'\x0C'
 CMD_GET_CPU_STATE = b'\x0D'
+CMD_ENTER_FAST_MODE = b'\x0E'
 
 @dataclass
 class CpuState:
@@ -325,6 +326,9 @@ class Debugger:
         if ok == b'\xFF':
             raise Exception('Too many breakpoints')
         print(f'Set breakpoint {ok} at address ${addr:04X}')
+    
+    def enter_fast_mode(self):
+        self.start_command(CMD_ENTER_FAST_MODE)
 
     def reset_cpu(self):
         self.start_command(CMD_RESET_CPU)
@@ -647,6 +651,10 @@ def do_debug(args):
                             print('No such line or symbol in file')
                     else:
                         print('Cannot set breakpoint on line without source info (provide a listing file)')
+            elif cmd in ('f', 'fast'):
+                dbg.enter_fast_mode()
+                print('Entered fast mode, press reset button to debug again')
+                break
             else:
                 print(f'Unknown command {repr(cmd)}')
         except ValueError as e:
