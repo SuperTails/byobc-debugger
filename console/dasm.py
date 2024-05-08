@@ -55,8 +55,10 @@ class SymbolTable:
 	def __init__(self, data: str):
 		self.symbols = dict()
 		for line in data.splitlines()[1:-1]:
-			name = line[:25].strip()
-			addr = int(line[25:29], base=16)
+			#name = line[:25].strip()
+			name, line = line.split(maxsplit=1)
+			#addr = int(line[25:29], base=16)
+			addr = int(line[:4], base=16)
 			self.symbols[name] = addr
 
 @dataclass
