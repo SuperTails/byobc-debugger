@@ -1,5 +1,6 @@
 import sys
 from serial import Serial
+import serial.tools.list_ports
 from dataclasses import dataclass
 from typing import Optional
 from enum import Enum
@@ -381,6 +382,31 @@ def are_different_or_none(lhs, rhs):
 def byte_to_signed(b: int):
     return int.from_bytes(b.to_bytes(1, 'little'), 'little', signed=True)
 
+def infer_port(default):
+    if default is not None:
+        print(f'Using explicit serial port {default}')
+        return default
+        
+    for port in serial.tools.list_ports.comports():
+        if port.vid == 0x1A86 and port.pid == 0x55D2:
+            if sys.platform.startswith('win'):
+                # I don't know why this is the case either
+                if port.location is None:
+                    print(f'Using serial port {port.device}')
+                    return port.device
+            elif sys.platform.startswith('darwin'):
+                # First port gets assigned the actual serial number
+                if port.serial_number is not None and port.serial_number in port.device:
+                    print(f'Using serial port {port.device}')
+                    return port.device
+            else:
+                print('Cannot guess port on Linux, too bad')
+                break
+    
+    raise Exception('Failed to find serial port, try specifying with --port')
+    
+
+
 def do_deploy_bin(args):
     return do_deploy(args, is_bin=True)
     
@@ -406,7 +432,7 @@ def do_deploy(args, is_bin=False):
             sys.exit(1)
 
     print('Connecting to debugger')
-    dbg = Debugger.open(args.port)
+    dbg = Debugger.open(infer_port(args.port))
     try:
         print(f'Firmware version: {dbg.print_info()}')
         print('Successfully connected to debugger!')
@@ -496,7 +522,7 @@ def do_debug(args):
         print(f'Loaded debug info for file {listing.file_name}')
 
     print('Connecting to debugger')
-    dbg = Debugger.open(args.port)
+    dbg = Debugger.open(infer_port(args.port))
     try:
         print(f'Firmware version: {dbg.print_info()}')
         print('Successfully connected to debugger!')
@@ -671,19 +697,19 @@ def main():
     subparsers = parser.add_subparsers(help='Action to take', required=True)
 
     parser_deploy = subparsers.add_parser('deploy', help='Assemble and upload a new program')
-    parser_deploy.add_argument('--port', required=True, help='Path to the debugger port')
-    parser_deploy.add_argument('--dasm', required=True, help='Path to the dasm executable')
+    parser_deploy.add_argument('--port', help='Path to the debugger port')
+    parser_deploy.add_argument('--dasm', help='Path to the dasm executable', default='dasm/dasm')
     parser_deploy.add_argument('file', help='Path to the assembly file')
     parser_deploy.add_argument('--out-dir', help='Path to place the assembled files', default='./')
     parser_deploy.set_defaults(func=do_deploy)
 
     parser_deploy_bin = subparsers.add_parser('deploy-bin', help='Upload an already-assembled program')
-    parser_deploy_bin.add_argument('--port', required=True, help='Path to the debugger port')
+    parser_deploy_bin.add_argument('--port', help='Path to the debugger port')
     parser_deploy_bin.add_argument('file', help='Path to the binary file')
     parser_deploy_bin.set_defaults(func=do_deploy_bin)
 
     parser_debug = subparsers.add_parser('debug', help='Run and debug code')
-    parser_debug.add_argument('--port', required=True, help='Path to the debugger port')
+    parser_debug.add_argument('--port', help='Path to the debugger port')
     parser_debug.set_defaults(func=do_debug)
 
     args = parser.parse_args()

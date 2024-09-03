@@ -1,8 +1,8 @@
 #pragma once
 
-#define VERSION_YEAR  2023
+#define VERSION_YEAR  2024
 #define VERSION_MONTH 9
-#define VERSION_DAY   8
+#define VERSION_DAY   2
 
 struct VersionInfo {
 	uint16_t year;

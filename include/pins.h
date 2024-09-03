@@ -35,11 +35,11 @@
 #define GPIO1_PIN_MASK  (1 << GPIO1_PIN)
 
 #define VPB_PORT        PORTA
-#define VPB_PIN         4
+#define VPB_PIN         2
 #define VPB_PIN_MASK    (1 << VPB_PIN)
 
 #define RDY_PORT        PORTA
-#define RDY_PIN         5
+#define RDY_PIN         3
 #define RDY_PIN_MASK    (1 << RDY_PIN)
 
 #define IRQB_PORT       PORTA

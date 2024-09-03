@@ -10,4 +10,14 @@ console/__pycache__
 img.out
 img.bin
 
+asm.bin
+asm.lst
+
+wip/
+personal-code/
+
 vasm6502_oldstyle_Win64/
+
+**/.DS_Store
+
+dasm/

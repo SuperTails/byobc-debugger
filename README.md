@@ -3,41 +3,21 @@
 This repository contains the scripts necessary to use the W65C02 debugger for 98-341.
 Clone this to a convenient place, as it will be necessary for doing nearly anything with the computer.
 
+To set up the dependencies, just run one of the `install_` scripts depending on your OS.
+
 ## 1. Running the Debugger
 
 In order to deploy your code to the computer and view it while it's running,
 you will need to use the debugging board.
 
-### 1.1 Finding the Debugger Port
-
-The debugger is identified by a port, which is assigned when you plug it into your laptop.
-On Windows you can find the port by looking in Device Manager. It will be under serial devices,
-and have a name like COM11 or COM5.
-If you're not sure which one it is, try unplugging the board and see which name disappears.
-
-![Screenshot of device manager](images/device_manager.png)
-
-On Linux/MacOS, running the following command will list available devices:
+On Windows, the command is usually:
 ```bash
-ls /dev/tty*
-```
-Again, try unplugging and replugging in the board to see which entry in the list appears.
-
-Note that the port for the board may change after unplugging it,
-so you will probably have to do this step each time you begin.
-
-### 1.2 Starting a Debugging Session
-
-Once you know the port for your debugger, just run `debugger.py` to start debugging.
-
-On windows, the command is usually:
-```bash
-python ./console/debugger.py debug --port=COMnumberhere
+python ./console/debugger.py debug
 ```
 
 On MacOS or Linux, the command is usually:
 ```bash
-python3 ./console/debugger.py debug --port=/dev/name-of-serial-port
+python3 ./console/debugger.py debug
 ```
 
 The commands that can be used for the debugger are in section 3.
@@ -52,33 +32,23 @@ In order to turn a program into a binary file (some series of bytes),
 you will need an _assembler_.
 
 For this class we will use **DASM**, because it's relatively simple and has some nice features.
-You can download DASM from [the DASM homepage](https://dasm-assembler.github.io).
-Extract the folder and then place the executable in a convenient location,
-as you will need to use it later.
-Make sure that it works by running it and checking if it spits out a version or help message:
-
-```bash
-./path/to/dasm
-
-DASM 2.20.15-SNAPSHOT
-Copyright (c) 1988-2020 by the DASM team.
-License GPLv2+: GNU GPL version 2 or later (see file LICENSE).
-DASM is free software: you are free to change and redistribute it.
-There is ABSOLUTELY NO WARRANTY, to the extent permitted by law.
-...      lots of other text ...
-```
+The installer script should have already downloaded DASM for you,
+but you can also get it from [the DASM homepage](https://dasm-assembler.github.io).
 
 Note that if you'd like to use some of the extra opcodes added by the W65C02,
 you will have to build DASM from source instead. This is completely optional,
 but some of the new instructions can be useful.
 
+*Disclaimer: the debugger does not support all of the new W65C02 instructions.*
+*They may freeze or behave incorrectly.*
+
 ### 2.2 Building and Deploying
 
 To deploy your code to the EEPROM, first make sure that your debugger is plugged in.
-Then use the `deploy.py` script as follows:
+Then just run the deploy command:
 
 ```bash
-python3 ./console/debugger.py deploy --port=path/to/debugger/port --dasm=path/to/dasm/executable path/to/code.S
+python3 ./console/debugger.py deploy path/to/code.S
 ```
 
 This will use DASM to compile your program, and then flash the resulting binary to the EEPROM.

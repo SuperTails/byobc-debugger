@@ -1,4 +1,4 @@
-	PROCESSOR 65C02
+	PROCESSOR 6502
 
 	SEG		text
 	ORG $8000
@@ -18,10 +18,6 @@ start:
 	jsr checksum
 	sta $12
 
-	; Now load all the values we got to make sure you can see them in the debugger
-	lda $10
-	ldx $11
-	ldy $12
 halt:
 	jmp halt
 

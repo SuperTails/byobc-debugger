@@ -1,4 +1,4 @@
-	PROCESSOR 65C02
+	PROCESSOR 6502
 
 lhs_value	EQU 23
 rhs_value	EQU 7

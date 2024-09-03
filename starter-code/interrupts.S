@@ -31,8 +31,46 @@ LCD_RS_DATA		= (1 << 5)
 
 TIMER_PERIOD = [5000 / 2] - 1
 
+	MACRO WAIT_FOR_LCD_READY
+
+	PHA
+
+	LDA #$00
+	STA VIA_DDR_B	; Set data pins to be inputs
+
+	LDA #[LCD_RS_CMD | LCD_RW_READ | LCD_EN_LOW]
+	STA VIA_REG_A	; Set up the pins to make sure they're ready before we enable
+
+.check_busy_flag:
+	LDA #[LCD_RS_CMD | LCD_RW_READ | LCD_EN_HIGH]
+	STA VIA_REG_A
+
+	LDA VIA_REG_B	; Check the busy flag, exit if it's unset
+	BPL .ready
+
+	LDA #[LCD_RS_CMD | LCD_RW_READ | LCD_EN_LOW]
+	STA VIA_REG_A
+
+	JMP .check_busy_flag
+
+.ready:
+
+	LDA #[LCD_RS_CMD | LCD_RW_WRITE | LCD_EN_LOW]
+	STA VIA_REG_A
+
+	LDA #$FF
+	STA VIA_DDR_B	; Restore pins to outputs
+
+	PLA
+
+	ENDM
 
 ; ========================================
+
+	SEG.U   zpg_variables
+	ORG $0000
+
+scratch: DC.B 0
 
 	SEG		text
 	ORG $8000
@@ -44,6 +82,8 @@ start:
 	LDA #$FF		; Set all VIA pins to be outputs
 	STA VIA_DDR_A
 	STA VIA_DDR_B
+
+	WAIT_FOR_LCD_READY
 
 	LDX #[LCD_EN_HIGH | LCD_RW_WRITE | LCD_RS_CMD]
 	LDY #[LCD_EN_LOW  | LCD_RW_WRITE | LCD_RS_CMD]
@@ -58,10 +98,10 @@ start:
 	STX VIA_REG_A
 	STY VIA_REG_A
 
-	LDA #80					; Wait for the display to be ready again
-delay_loop:
-	ADC #1
-	BCC delay_loop
+	WAIT_FOR_LCD_READY
+
+	LDX #[LCD_EN_HIGH | LCD_RW_WRITE | LCD_RS_CMD]
+	LDY #[LCD_EN_LOW  | LCD_RW_WRITE | LCD_RS_CMD]
 
 	LDA #%00000110			; Increment DDRAM pointer, do not shift display
 	STA VIA_REG_B
@@ -69,6 +109,15 @@ delay_loop:
 	STY VIA_REG_A
 
 	LDA #%00001111			; Set display on, cursor on, enable cursor blink
+	STA VIA_REG_B
+	STX VIA_REG_A
+	STY VIA_REG_A
+
+	LDA #'H
+	LDX #[LCD_EN_HIGH | LCD_RW_WRITE | LCD_RS_DATA]
+	LDY #[LCD_EN_LOW  | LCD_RW_WRITE | LCD_RS_DATA]
+
+	STY VIA_REG_A
 	STA VIA_REG_B
 	STX VIA_REG_A
 	STY VIA_REG_A
@@ -112,6 +161,7 @@ halt:
 	; Our code is free to do whatever we want in here,
 	; without worrying about checking for new data or timers.
 	; The interrupts will just handle it whenever necessary!
+
 	JMP halt
 
 

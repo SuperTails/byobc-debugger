@@ -43,6 +43,11 @@ start:
 	STX VIA_REG_A
 	STY VIA_REG_A
 
+	LDA #80					; Wait for the display to be ready again
+delay_loop:
+	ADC #1
+	BCC delay_loop
+
 	LDA #%00000110			; Increment DDRAM pointer, do not shift display
 	STA VIA_REG_B
 	STX VIA_REG_A

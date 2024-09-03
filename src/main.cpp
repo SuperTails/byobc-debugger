@@ -10,7 +10,7 @@
 
 #include <Arduino.h>
 
-LedDriver LED_DRIVER;
+// LedDriver LED_DRIVER;
 
 using gpio::status_t;
 
@@ -206,12 +206,18 @@ int has_hit_enabled_breakpoint(uint16_t addr) {
 
 int update_cnt = 0;
 
+void sw_reset() {
+  CCP = 0xD8;
+  RSTCTRL.SWRR = 1;
+}
+
 enum class Action {
   None,
   StepHalfCycle,
   StepCycle,
   Step,
   Continue,
+  EnterFastMode,
 };
 
 enum class Wait {
@@ -243,9 +249,7 @@ Action handle_commands(PhysicalW65C02 &cpu, bool phi2) {
 
       program_eeprom_page(cmd.write_eeprom.addr, cmd.write_eeprom.data);
 
-      //  TODO: Depends!!
-      gpio::set_addr_bus_dir(gpio::Direction::Output);
-      gpio::set_addr_bus_mode(gpio::AddressBusMode::DebuggerDriven);
+      sw_reset();
       break;
     case CommandType::ReadMemory:
       gpio::write_we(true);
@@ -260,7 +264,6 @@ Action handle_commands(PhysicalW65C02 &cpu, bool phi2) {
         gpio::write_addr_bus(addr);
         delay_loop(5);
         uint8_t data = gpio::read_data_bus();
-        LED_DRIVER.show_data(data);
         uart::put(data);
       }
 
@@ -337,6 +340,10 @@ Action handle_commands(PhysicalW65C02 &cpu, bool phi2) {
       uart::put_bytes(reinterpret_cast<const uint8_t*>(&state), sizeof(CpuState));
       break;
     }
+    case CommandType::EnterFastMode: {
+      return Action::EnterFastMode;
+      break;
+    }
     default:
       break;
     }
@@ -354,7 +361,36 @@ inline void delay_microsecond() {
   asm volatile ("nop");
 }
 
+void run();
+
+void phi2_fast();
+
+#define LED_DATA_LEN 36
+
+
+template<int I>
+struct UnrollFold {
+  void operator() (uint8_t data[LED_DATA_LEN]) {
+    while ((SPI0.INTFLAGS & (1 << 5)) == 0) {}
+    SPI0.DATA = data[LED_DATA_LEN - I];
+    UnrollFold<I-1> {}(data);
+  }
+};
+
+template<>
+struct UnrollFold<0> {
+  void operator() (uint8_t data[LED_DATA_LEN]) {}
+};
+
+void write_hot_loop(uint8_t data[LED_DATA_LEN]) {
+  UnrollFold<LED_DATA_LEN> {}(data);
+}
+
 void setup() {
+  setup_pin_directions();
+
+  uart::init();
+
   // Default is CLK_MAIN / 6
   // New is CLK_MAIN / 16
 
@@ -362,7 +398,104 @@ void setup() {
   CCP = 0xD8;
   CLKCTRL.MCLKCTRLB = value;*/
 
-  setup_pin_directions();
+#if 0
+  VPB_PORT.DIRSET = VPB_PIN_MASK;
+  PORTA.PIN4CTRL |= (1 << 7);
+
+
+  SPI0.CTRLA |= (1 << 5); // Host mode
+
+  // Set clock frequency to 2.5MHz
+  SPI0.CTRLA = (SPI0.CTRLA & ~0b110) | (0x0 << 1); // Prescaler TODO
+  SPI0.CTRLA |= (1 << 4); // CLK2X
+
+  SPI0.CTRLB |= (1 << 7); // Enable buffer mode
+  SPI0.CTRLB |= (1 << 6); // First write goes directly to shift register
+  SPI0.CTRLB |= (1 << 2); // Disable select thingy
+
+  SPI0.CTRLA |= 0x1; // Enable
+
+  uint8_t a = 17;
+
+  uart::put('b');
+
+  //uint32_t r = 0x01, g = 0x51, b = 0x22;
+  uint32_t r = 0x00, g = 0x51, b = 0x00;
+
+  while (1) {
+    uint8_t data[36] = { 0 };
+    unsigned bit_index = 0;
+
+    b = (b + 1) & 0xFF;
+
+    uint32_t rgb = (g << 16) | (r << 8) | (b << 0);
+    for (int j = 0; j < 1; ++j) {
+      for (int i = 0; i < 24; ++i) {
+        bool bit = (rgb >> (23 - i)) & 1;
+
+        if (bit) {
+          for (int k = 0; k < 6; ++k) {
+            data[bit_index / 8] |= (0    << (7 - (bit_index % 8)));
+            ++bit_index;
+          }
+          for (int k = 0; k < 6; ++k) {
+            data[bit_index / 8] |= (1    << (7 - (bit_index % 8)));
+            ++bit_index;
+          }
+        } else {
+          for (int k = 0; k < 3; ++k) {
+            data[bit_index / 8] |= (0    << (7 - (bit_index % 8)));
+            ++bit_index;
+          }
+          for (int k = 0; k < 6; ++k) {
+            data[bit_index / 8] |= (1    << (7 - (bit_index % 8)));
+            ++bit_index;
+          }
+        }
+
+        /*
+        data[bit_index / 8] |= (0    << (7 - (bit_index % 8)));
+        ++bit_index;
+        data[bit_index / 8] |= (!bit << (7 - (bit_index % 8)));
+        ++bit_index;
+        data[bit_index / 8] |= (1    << (7 - (bit_index % 8)));
+        ++bit_index;
+        */
+
+        /*
+        data[bit_index / 8] |= (0    << (7 - (bit_index % 8)));
+        ++bit_index;
+        data[bit_index / 8] |= (0    << (7 - (bit_index % 8)));
+        ++bit_index;
+        data[bit_index / 8] |= (0    << (7 - (bit_index % 8)));
+        ++bit_index;
+        data[bit_index / 8] |= (!bit << (7 - (bit_index % 8)));
+        ++bit_index;
+        data[bit_index / 8] |= (!bit << (7 - (bit_index % 8)));
+        ++bit_index;
+        data[bit_index / 8] |= (!bit << (7 - (bit_index % 8)));
+        ++bit_index;
+        data[bit_index / 8] |= (1    << (7 - (bit_index % 8)));
+        ++bit_index;
+        data[bit_index / 8] |= (1    << (7 - (bit_index % 8)));
+        ++bit_index;
+        data[bit_index / 8] |= (1    << (7 - (bit_index % 8)));
+        ++bit_index;
+        */
+     }
+    }
+
+    while (bit_index < sizeof(data) * 8) {
+      data[bit_index / 8] |= (1 << (7 - (bit_index % 8)));
+      ++bit_index;
+    }
+
+    write_hot_loop(data);
+
+    delay_millis(100);
+  }
+
+#endif
 
   gpio::set_data_bus_dir(gpio::Direction::Output);
   gpio::write_data_bus(0xEA);
@@ -376,7 +509,6 @@ void setup() {
   PORTF.PORTCTRL |= 0x1;
   PORTC.PORTCTRL |= 0x1;
 
-  uart::init();
 
   if (TEST_PINS) {
     uint8_t result = test_bridged_pins();
@@ -386,84 +518,17 @@ void setup() {
     while (1) { asm volatile ("nop"); }
   }
 
-  i2c::init();
-
-  LED_DRIVER.init();
-
-  LED_DRIVER.show_status({ 0xFFFF });
-
-  /*while (1) {
-    LED_DRIVER.show_data(FUSE.SYSCFG0);
-  }*/
-
-  /*while (1) {
-    LED_DRIVER.show_addr(0x1234);
-
-    volatile uint32_t k = 0;
-    for (k = 0; k < 500000; ++k);
-
-    LED_DRIVER.show_addr(0x4321);
-
-    for (k = 0; k < 500000; ++k);
-  }*/
-
-  /*while (1) {
-    uint16_t keys = LED_DRIVER.keyscan();
-    LED_DRIVER.show_addr(keys);
-  }*/
-
   gpio::set_gpio1_dir(gpio::Direction::Output);
 
   gpio::write_gpio1(true); // enable the EEPROM outputs
   gpio::write_we(true);
 
-  //uart::put_bytes("Hello, world!\n", 14);
-
-  gpio::write_be(false); // enable the 6502 buses
-
-  gpio::set_addr_bus_dir(gpio::Direction::Input);
-  gpio::set_data_bus_dir(gpio::Direction::Input);
+  gpio::write_be(false); // disable the 6502 buses
 
   gpio::set_addr_bus_dir(gpio::Direction::Output);
-
-  gpio::write_addr_bus(0x8024);
+  gpio::set_data_bus_dir(gpio::Direction::Input);
 
   delay_loop(1000);
-
-
-  /*
-  while (1) {
-    physicalw65c02::BusState state;
-    cpu.get_bus_state(state);
-
-    uint8_t data;
-
-    gpio::write_addr_bus(state.addr);
-
-
-    if (state.rwb) {
-      gpio::set_data_bus_dir(gpio::Direction::Input);
-      data = gpio::read_data_bus();
-    } else {
-      gpio::set_data_bus_dir(gpio::Direction::Output);
-      gpio::write_data_bus(state.data);
-      data = state.data;
-    }
-
-    gpio::write_phi2(true);
-
-    if (++i == 100) {
-      uart::put(0xFF);
-      uart::put(state.addr);
-      uart::put(state.addr >> 8);
-      uart::put(data);
-      i = 0;
-    }
-
-    cpu.tick_cycle({ data });
-    gpio::write_phi2(false);
-  }
-  */
 
   RESB_PORT.OUTCLR = RESB_PIN_MASK;
 
@@ -477,8 +542,85 @@ void setup() {
   gpio::write_phi2(true);
   delay_loop(50);
 
-  uint32_t cycle = 0;
+  run();
 
+  // This function returned so we need to enter fast mode
+
+  gpio::set_addr_bus_dir(gpio::Direction::Input);
+  gpio::set_data_bus_dir(gpio::Direction::Input);
+
+  gpio::set_rwb_dir(gpio::Direction::Input);
+  gpio::set_sync_dir(gpio::Direction::Input);
+  gpio::set_vpb_dir(gpio::Direction::Input);
+
+  gpio::write_be(true); // enable the 6502 buses
+
+  RESB_PORT.OUTCLR = RESB_PIN_MASK;
+
+  // Do a single clock cycle with RESB held low to make sure all devices acknowledge it.
+  gpio::write_phi2(false);
+  delay_loop(50);
+  gpio::write_phi2(true);
+  delay_loop(50);
+  gpio::write_phi2(false);
+  delay_loop(50);
+  gpio::write_phi2(true);
+  delay_loop(50);
+
+  RESB_PORT.OUTSET = RESB_PIN_MASK;
+
+  NMIB_PORT.DIRSET = NMIB_PIN_MASK;
+
+  // TCA0 pins on PB[5:0]
+  PORTMUX.TCAROUTEA = (PORTMUX.TCAROUTEA & ~0b111) | 0x1;
+
+  TCA0.SINGLE.CTRLA &= ~1; // Disable
+  TCA0.SINGLE.CTRLD |= 1; // Split mode
+  TCA0.SINGLE.CTRLESET = 0b1100; // RESET
+
+  TCA0.SPLIT.CTRLA = (TCA0.SINGLE.CTRLA & ~0b1110); // No prescaler
+
+  TCA0.SPLIT.LCMP0 = 1;
+  TCA0.SPLIT.LPER = 1;
+
+  TCA0.SPLIT.HCMP0 = 1;
+  TCA0.SPLIT.HPER = 1;
+
+  TCA0.SPLIT.CTRLB |= (1 << 0); // LCMP0EN
+  TCA0.SPLIT.CTRLB |= (1 << 4); // HCMP0EN
+
+  TCA0.SPLIT.CTRLA |= 1;
+
+  /*TCA0.SINGLE.CMP0 = 1;
+  TCA0.SINGLE.PER = 1;
+
+  TCA0.SINGLE.CMP2 = 1;
+  TCA0.SINGLE.CMP0 = 1;
+  TCA0.SINGLE.PER = 1;
+
+  TCA0.SINGLE.CTRLB = TCA0.SINGLE.CTRLB & ~0x7F; // Clear all bits
+  TCA0.SINGLE.CTRLB |= (1 << 4); // 
+  TCA0.SINGLE.CTRLB |= 0x1; // FRQ mode
+
+  TCA0.SINGLE.CTRLA |= 1; // Enable*/
+
+  while (1) {
+    asm volatile ("nop");
+  }
+
+  //phi2_fast();
+}
+
+__attribute__((noinline))
+void phi2_fast() {
+  while (1) {
+    PHI2_PORT.OUTTGL = PHI2_PIN_MASK;
+  }
+}
+
+void run() {
+  uint32_t cycle = 0;
+  
   PhysicalW65C02 cpu = {};
 
   while (1) {
@@ -516,19 +658,11 @@ void setup() {
     gpio::write_sync(cpu_bus_state.sync);
     gpio::write_vpb(cpu_bus_state.vpb);
 
-    if (int8_t i = has_hit_enabled_breakpoint(cpu_bus_state.addr); i != -1) {
+    if (int8_t i = has_hit_enabled_breakpoint(cpu.pc); i != -1 && cpu_bus_state.sync) {
+    //if (int8_t i = has_hit_enabled_breakpoint(cpu_bus_state.addr); i != -1) {
       WAIT = Wait::HalfCycle;
       hit_breakpoint(i);
     }
-
-    // TODO: What should the data bus show when PHI2 is low?
-    /*if (WAIT != Wait::None) {
-      data = gpio::read_data_bus();
-      status = gpio::read_status();
-      LED_DRIVER.show_addr(addr);
-      LED_DRIVER.show_data(data);
-      LED_DRIVER.show_status(status);
-    }*/
 
     Action action;
     do {
@@ -545,6 +679,8 @@ void setup() {
       } else if (action == Action::Step) {
         WAIT = Wait::Sync;
         break;
+      } else if (action == Action::EnterFastMode) {
+        return;
       }
     } while (WAIT == Wait::HalfCycle);
 
@@ -559,18 +695,7 @@ void setup() {
 
     /* ---- PHI2 is high ---- */
 
-    //delay_microsecond();
-    delay_loop(20);
-
-    // TODO: ???
-    /*if (WAIT != Wait::None) {
-      addr = gpio::read_addr_bus();
-      data = gpio::read_data_bus();
-      status = gpio::read_status();
-      LED_DRIVER.show_addr(addr);
-      LED_DRIVER.show_data(data);
-      LED_DRIVER.show_status(status);
-    }*/
+    //delay_loop(20);
 
     do {
       action = handle_commands(cpu, true);
@@ -586,6 +711,8 @@ void setup() {
       } else if (action == Action::Step) {
         WAIT = Wait::Sync;
         break;
+      } else if (action == Action::EnterFastMode) {
+        return;
       }
     } while (WAIT == Wait::HalfCycle || WAIT == Wait::Cycle || (!cpu_bus_state.sync && WAIT == Wait::Sync));
 

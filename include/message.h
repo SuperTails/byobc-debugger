@@ -40,6 +40,7 @@ enum class CommandType : uint8_t {
 	HitBreakpoint = 0xB,
 	PrintInfo = 0xC,
 	GetCpuState = 0xD,
+	EnterFastMode = 0xE,
 	MAX_CMD
 };
 

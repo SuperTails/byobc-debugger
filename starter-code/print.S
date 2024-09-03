@@ -1,4 +1,4 @@
-	PROCESSOR 65C02
+	PROCESSOR 6502
 
 VIA_REG_B	= $6000
 VIA_REG_A	= $6001
@@ -36,6 +36,12 @@ start:
 	STA VIA_REG_B
 	STX VIA_REG_A
 	STY VIA_REG_A
+
+	LDA #0
+delay_loop:
+	CLC
+	ADC #1
+	BNE delay_loop
 
 	LDA #%00000110			; Increment DDRAM pointer, do not shift display
 	STA VIA_REG_B
