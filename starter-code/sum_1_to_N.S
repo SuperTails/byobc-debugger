@@ -10,7 +10,7 @@ start:
 sum_loop:
 	; Your code goes here!
 
-	; Add X to A
+	; Add X to A (hint: you can't do this directly)
 
 	; Decrement X
 
