@@ -359,7 +359,7 @@ class Debugger:
             self.step_cycle()
             self.poll_breakpoint()
             state = self.get_cpu_state()
-            if state.sync:
+            if state.sync and state.phi2:
                 break
         
     def step_half_cycle(self):
@@ -395,8 +395,8 @@ def infer_port(default):
                     print(f'Using serial port {port.device}')
                     return port.device
             elif sys.platform.startswith('darwin'):
-                # First port gets assigned the actual serial number
-                if port.serial_number is not None and port.serial_number in port.device:
+                # First port ends in 1, second port ends in 3
+                if port.device.endswith('1'):
                     print(f'Using serial port {port.device}')
                     return port.device
             else:
