@@ -24,12 +24,12 @@ int get_command(Command &cmd) {
 	case CommandType::WriteEEPROM: {
 		uart::get_bytes(reinterpret_cast<uint8_t*>(&cmd.write_eeprom), sizeof(WriteEEPROMCmd));
 		uint16_t rx_crc = cmd.write_eeprom.checksum;
-		uint16_t calc_crc = update_crc(0, reinterpret_cast<uint8_t*>(&cmd.write_eeprom), 2 + EEPROM_PAGE_SIZE);
+		uint16_t calc_crc = update_crc(0, reinterpret_cast<uint8_t*>(&cmd.write_eeprom), 2 + 64);
 		if (rx_crc != calc_crc) {
 			uart::put(ERR_BAD_CHECKSUM);
 			return ERR_BAD_CHECKSUM;
 		}
-		if (cmd.write_eeprom.addr & EEPROM_PAGE_MASK) {
+		if (cmd.write_eeprom.addr & ((1 << 6) - 1)) {
 			uart::put(ERR_BAD_ADDR);
 			return ERR_BAD_ADDR;
 		}
@@ -45,6 +45,10 @@ int get_command(Command &cmd) {
 		uart::get_bytes(reinterpret_cast<uint8_t*>(&cmd.set_breakpoint), sizeof(SetBreakpointCmd));
 		break;
 	}
+	case CommandType::SectorErase: {
+		uart::get_bytes(reinterpret_cast<uint8_t*>(&cmd.sector_erase), sizeof(SectorEraseCmd));
+		break;
+	}
 	case CommandType::ResetCpu:
 		break;
 	case CommandType::GetBusState:
@@ -55,6 +59,7 @@ int get_command(Command &cmd) {
 	case CommandType::Continue:
 	case CommandType::PrintInfo:
 	case CommandType::GetCpuState:
+	case CommandType::DebuggerReset:
 		break;
 	case CommandType::MAX_CMD:
 		break;

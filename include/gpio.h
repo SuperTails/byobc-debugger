@@ -27,7 +27,7 @@ namespace gpio {
 	uint16_t read_addr_bus();
 
 	void set_irqb_dir(Direction dir);
-	void set_gpio1_dir(Direction dir);
+	void set_progb_dir(Direction dir);
 	void set_phi2_dir(Direction dir);
 	void set_rwb_dir(Direction dir);
 	void set_sync_dir(Direction dir);
@@ -36,7 +36,7 @@ namespace gpio {
 	void set_nmib_dir(Direction dir);
 
 	void write_irqb(bool level);
-	void write_gpio1(bool level);
+	void write_progb(bool level);
 	void write_we(bool level);
 	void write_be(bool level);
 	void write_phi2(bool level);
@@ -49,8 +49,4 @@ namespace gpio {
 	using status_t = ::bus_status_t;
 
 	status_t read_status();
-
-	//void eeprom_page_write(uint16_t addr, const uint8_t data[128]);
-
-	//void eeprom_page_read(uint16_t addr, uint8_t data[128]);
 }

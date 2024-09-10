@@ -62,7 +62,7 @@ namespace gpio {
 	void set_irqb_dir(Direction dir) {
 		IRQB_PORT.DIR = (IRQB_PORT.DIR & ~IRQB_PIN_MASK) | (static_cast<uint8_t>(dir) << IRQB_PIN);
 	}
-	void set_gpio1_dir(Direction dir) {
+	void set_progb_dir(Direction dir) {
 		GPIO1_PORT.DIR = (GPIO1_PORT.DIR & ~GPIO1_PIN_MASK) | (static_cast<uint8_t>(dir) << GPIO1_PIN);
 	}
 	void set_phi2_dir(Direction dir) {
@@ -87,7 +87,7 @@ namespace gpio {
 	void write_irqb(bool level) {
 		IRQB_PORT.OUT = (IRQB_PORT.OUT & ~IRQB_PIN_MASK) | (level << IRQB_PIN);
 	}
-	void write_gpio1(bool level) {
+	void write_progb(bool level) {
 		GPIO1_PORT.OUT = (GPIO1_PORT.OUT & ~GPIO1_PIN_MASK) | (level << GPIO1_PIN);
 	}
 	void write_we(bool level) {
@@ -113,48 +113,5 @@ namespace gpio {
 	}
 	void write_nmib(bool level) {
 		NMIB_PORT.OUT = (NMIB_PORT.OUT & ~NMIB_PIN_MASK) | (level << NMIB_PIN);
-	}
-
-	void eeprom_page_write(uint16_t addr, const uint8_t data[64]) {
-		addr &= 0xFFC0;
-
-		write_we(true); // disable WE
-		write_be(false); // disable the 6502
-		write_gpio1(true); // disable the EEPROM's output
-
-		set_addr_bus_dir(Direction::Output);
-		set_data_bus_dir(Direction::Output);
-
-		// TODO: Timing
-
-		for (int i = 0; i < 64; ++i) {
-			write_addr_bus(addr + i);
-			write_we(false);
-			write_data_bus(data[i]);
-			write_we(true);
-		}
-
-		set_addr_bus_dir(Direction::Input);
-		set_data_bus_dir(Direction::Input);
-
-		write_gpio1(false); // enable the EEPROM's output
-		write_be(true); // enable the 6502
-	}
-
-	void eeprom_page_read(uint16_t addr, uint8_t data[64]) {
-		addr &= 0xFFC0;
-
-		write_be(false); // disable the 6502
-
-		set_addr_bus_dir(Direction::Output);
-
-		// TODO: Timing
-
-		for (int i = 0; i < 64; ++i) {
-			write_addr_bus(addr + i);
-			data[i] = read_data_bus();
-		}
-
-		set_addr_bus_dir(Direction::Input);
 	}
 }

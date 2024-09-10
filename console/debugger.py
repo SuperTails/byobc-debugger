@@ -68,6 +68,8 @@ CMD_HIT_BREAKPOINT = b'\x0B'
 CMD_PRINT_INFO = b'\x0C'
 CMD_GET_CPU_STATE = b'\x0D'
 CMD_ENTER_FAST_MODE = b'\x0E'
+CMD_DEBUGGER_RESET = b'\x0F'
+CMD_SECTOR_ERASE = b'\x10'
 
 @dataclass
 class CpuState:
@@ -207,6 +209,10 @@ EEPROM_PAGE_BITS = 6
 EEPROM_PAGE_SIZE = (1 << EEPROM_PAGE_BITS)
 EEPROM_PAGE_MASK = (EEPROM_PAGE_SIZE - 1)
 
+EEPROM_SECTOR_BITS = 12
+EEPROM_SECTOR_SIZE = (1 << EEPROM_SECTOR_BITS)
+EEPROM_SECTOR_MASK = (EEPROM_SECTOR_SIZE - 1)
+
 @dataclass
 class VersionInfo:
     year: int
@@ -304,6 +310,11 @@ class Debugger:
         confirm = self.port.read_exact(1)
         if confirm != b'\x00':
             raise Exception(confirm)
+
+    def sector_erase(self, sector: int):
+        self.start_command(CMD_SECTOR_ERASE)
+
+        self.port.write(sector.to_bytes(2, 'little'))
     
     def read(self, addr: int, len_bytes: int):
         assert(len_bytes < 0x1_0000)
@@ -334,6 +345,9 @@ class Debugger:
     def reset_cpu(self):
         self.start_command(CMD_RESET_CPU)
     
+    def self_reset(self):
+        self.start_command(CMD_DEBUGGER_RESET)
+    
     def get_bus_state(self) -> BusState:
         self.start_command(CMD_GET_BUS_STATE)
 
@@ -356,7 +370,7 @@ class Debugger:
     def step(self):
         while True:
             self.poll_breakpoint()
-            self.step_cycle()
+            self.step_half_cycle()
             self.poll_breakpoint()
             state = self.get_cpu_state()
             if state.sync and state.phi2:
@@ -479,6 +493,24 @@ def do_deploy(args, is_bin=False):
             if max(c1_start, c2_start) <= min(c1_end, c2_end):
                 raise Exception('TODO: Overlapping chunks')
     
+    print('Erasing')
+
+    sectors = dict()
+    for chunk in chunks:
+        base_sector_addr = chunk.base_addr // EEPROM_SECTOR_SIZE 
+        end_sector_addr = (chunk.base_addr + len(chunk.data) + EEPROM_SECTOR_SIZE - 1) // EEPROM_SECTOR_SIZE
+        if base_sector_addr not in sectors or end_sector_addr > sectors[base_sector_addr]:
+            sectors[base_sector_addr] = end_sector_addr
+    
+    for base, end in sectors.items():
+        for i in range(base, end):
+            dbg.sector_erase(base * EEPROM_SECTOR_SIZE)
+            time.sleep(0.100)
+            print('.', end='', flush=True)
+    print()
+
+    print('Flashing')
+    
     for chunk in chunks:
         base_addr = chunk.base_addr & ~EEPROM_PAGE_MASK
         data = copy.copy(chunk.data)
@@ -491,10 +523,10 @@ def do_deploy(args, is_bin=False):
             dbg.page_write(base_addr + page, data[page:][:EEPROM_PAGE_SIZE])
             print('.', end='', flush=True)
     print()
-    
-    print('Resetting CPU')
 
-    dbg.reset_cpu()
+    print('Resetting debugger...')
+    
+    dbg.self_reset()
 
     print('Done!')
 

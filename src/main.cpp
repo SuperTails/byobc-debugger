@@ -5,6 +5,7 @@
 #include "message.h"
 #include "gpio.h"
 #include "version.h"
+#include "programmer.h"
 
 #include "physicalw65c02.h"
 
@@ -14,69 +15,13 @@
 
 using gpio::status_t;
 
-void delay_loop(int amount) {
+static void delay_loop(int amount) {
   volatile int i = 0;
   for (i = 0; i < amount; ++i);
 }
 
 void delay_millis(int millis) {
   delay_loop(millis * 12);
-}
-
-// Address and data buses must be in output mode.
-// Page must be aligned to a 128-byte boundary (mask 0xFF80).
-void program_eeprom_page(uint16_t page, const uint8_t data[EEPROM_PAGE_SIZE]) {
-  page &= ~EEPROM_PAGE_MASK;
-
-  gpio::write_gpio1(false); // disable EEPROM output 
-
-  gpio::write_addr_bus(0x5555 | 0x8000);
-  delay_loop(5);
-  WE_PORT.OUTCLR = WE_PIN_MASK;
-  delay_loop(1);
-
-  gpio::write_data_bus(0xAA);
-  gpio::write_addr_bus(0x2AAA | 0x8000);
-  delay_loop(5);
-  WE_PORT.OUTSET = WE_PIN_MASK;
-  delay_loop(1);
-  WE_PORT.OUTCLR = WE_PIN_MASK;
-  delay_loop(1);
-
-  gpio::write_data_bus(0x55);
-  gpio::write_addr_bus(0x5555 | 0x8000);
-  delay_loop(5);
-  WE_PORT.OUTSET = WE_PIN_MASK;
-  delay_loop(1);
-  WE_PORT.OUTCLR = WE_PIN_MASK;
-  delay_loop(1);
-
-  gpio::write_data_bus(0xA0);
-  gpio::write_addr_bus(page | 0x8000);
-  delay_loop(5);
-  WE_PORT.OUTSET = WE_PIN_MASK;
-  delay_loop(1);
-
-  for (int i = 0; i < EEPROM_PAGE_SIZE; ++i) {
-    delay_loop(1);
-
-    WE_PORT.OUTCLR = WE_PIN_MASK;
-    delay_loop(1);
-
-    uint16_t addr = page | i;
-
-    delay_loop(10); // address hold time
-    gpio::write_addr_bus((addr + 1) | 0x8000); // in preparation for next falling edge
-    gpio::write_data_bus(data[i]); // latched on the rising edge
-    delay_loop(10);
-
-    WE_PORT.OUTSET = WE_PIN_MASK;
-  }
-
-  delay_loop(50000);
-  delay_loop(50000);
-
-  gpio::write_gpio1(true); // re-enable EEPROM output
 }
 
 #define USED_PINS (8 + 8 + 4 + 4 + 6)
@@ -218,6 +163,7 @@ enum class Action {
   Step,
   Continue,
   EnterFastMode,
+  Stop,
 };
 
 enum class Wait {
@@ -247,9 +193,17 @@ Action handle_commands(PhysicalW65C02 &cpu, bool phi2) {
       gpio::set_addr_bus_mode(gpio::AddressBusMode::DebuggerDriven);
       gpio::set_data_bus_dir(gpio::Direction::Output);
 
-      program_eeprom_page(cmd.write_eeprom.addr, cmd.write_eeprom.data);
+      for (int i = 0; i < 64; ++i) {
+        programmer::byte_program(cmd.write_eeprom.addr + i, cmd.write_eeprom.data[i]);
+      }
 
-      sw_reset();
+      return Action::Stop;
+    case CommandType::SectorErase:
+      gpio::set_addr_bus_mode(gpio::AddressBusMode::DebuggerDriven);
+      gpio::set_data_bus_dir(gpio::Direction::Output);
+
+      programmer::sector_erase(cmd.sector_erase.addr);
+
       break;
     case CommandType::ReadMemory:
       gpio::write_we(true);
@@ -342,6 +296,12 @@ Action handle_commands(PhysicalW65C02 &cpu, bool phi2) {
     }
     case CommandType::EnterFastMode: {
       return Action::EnterFastMode;
+      break;
+    }
+    case CommandType::DebuggerReset: {
+      // Wait for TX data register empty
+      delay_millis(100);
+      sw_reset();
       break;
     }
     default:
@@ -518,9 +478,9 @@ void setup() {
     while (1) { asm volatile ("nop"); }
   }
 
-  gpio::set_gpio1_dir(gpio::Direction::Output);
+  gpio::set_progb_dir(gpio::Direction::Output);
 
-  gpio::write_gpio1(true); // enable the EEPROM outputs
+  gpio::write_progb(true); // enable the EEPROM outputs
   gpio::write_we(true);
 
   gpio::write_be(false); // disable the 6502 buses
@@ -681,6 +641,8 @@ void run() {
         break;
       } else if (action == Action::EnterFastMode) {
         return;
+      } else if (action == Action::Stop) {
+        WAIT = Wait::HalfCycle;
       }
     } while (WAIT == Wait::HalfCycle);
 
@@ -713,6 +675,8 @@ void run() {
         break;
       } else if (action == Action::EnterFastMode) {
         return;
+      } else if (action == Action::Stop) {
+        WAIT = Wait::HalfCycle;
       }
     } while (WAIT == Wait::HalfCycle || WAIT == Wait::Cycle || (!cpu_bus_state.sync && WAIT == Wait::Sync));
 

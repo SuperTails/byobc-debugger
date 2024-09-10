@@ -41,16 +41,14 @@ enum class CommandType : uint8_t {
 	PrintInfo = 0xC,
 	GetCpuState = 0xD,
 	EnterFastMode = 0xE,
+	DebuggerReset = 0xF,
+	SectorErase = 0x10,
 	MAX_CMD
 };
 
-#define EEPROM_PAGE_BITS 6
-#define EEPROM_PAGE_SIZE (1 << EEPROM_PAGE_BITS)
-#define EEPROM_PAGE_MASK (EEPROM_PAGE_SIZE - 1)
-
 struct WriteEEPROMCmd {
 	uint16_t addr;
-	uint8_t data[EEPROM_PAGE_SIZE];
+	uint8_t data[64];
 	uint16_t checksum;
 };
 
@@ -67,12 +65,17 @@ struct HitBreakpointCmd {
 	uint8_t which;
 };
 
+struct SectorEraseCmd {
+	uint16_t addr;
+};
+
 struct Command {
 	CommandType ty;
 	union {
 		WriteEEPROMCmd write_eeprom;
 		ReadMemoryCmd read_memory;
 		SetBreakpointCmd set_breakpoint;
+		SectorEraseCmd sector_erase;
 	};
 };
 
