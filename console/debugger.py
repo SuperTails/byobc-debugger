@@ -381,6 +381,9 @@ class Debugger:
     
     def step_cycle(self):
         self.step_half_cycle()
+        state = self.get_cpu_state()
+        if state.phi2:
+            return
         self.step_half_cycle()
     
     def cont(self):

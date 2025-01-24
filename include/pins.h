@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include "version.h"
 
 #define NMIB_PORT       PORTB
 #define NMIB_PIN        0
@@ -34,6 +35,18 @@
 #define GPIO1_PIN       1
 #define GPIO1_PIN_MASK  (1 << GPIO1_PIN)
 
+#if BOARD_REV == 2
+
+#define VPB_PORT        PORTA
+#define VPB_PIN         4
+#define VPB_PIN_MASK    (1 << VPB_PIN)
+
+#define RDY_PORT        PORTA
+#define RDY_PIN         5
+#define RDY_PIN_MASK    (1 << RDY_PIN)
+
+#else
+
 #define VPB_PORT        PORTA
 #define VPB_PIN         2
 #define VPB_PIN_MASK    (1 << VPB_PIN)
@@ -41,6 +54,10 @@
 #define RDY_PORT        PORTA
 #define RDY_PIN         3
 #define RDY_PIN_MASK    (1 << RDY_PIN)
+
+#endif // #if BOARD_REV == 2
+
+
 
 #define IRQB_PORT       PORTA
 #define IRQB_PIN        6

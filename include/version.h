@@ -4,6 +4,8 @@
 #define VERSION_MONTH 9
 #define VERSION_DAY   10
 
+#define BOARD_REV 3
+
 struct VersionInfo {
 	uint16_t year;
 	uint8_t  month;
