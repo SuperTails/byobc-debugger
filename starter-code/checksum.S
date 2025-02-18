@@ -10,13 +10,30 @@ start:
 	; but these could really just be written as ldx #0, ldx #14, ldx #28.
 	ldx #[string_1-string_data]
 	jsr checksum
-	sta $10
+    cmp #$A9
+    bne fail
+
 	ldx #[string_2-string_data]
 	jsr checksum
-	sta $11
+    cmp #$B2
+    bne fail
+
 	ldx #[string_3-string_data]
 	jsr checksum
-	sta $12
+    cmp #$9C
+    bne fail
+
+pass:
+    ; success!
+    lda #$00
+    jmp pass
+
+fail:
+    lda #$FF
+    jmp fail
+
+    
+
 
 halt:
 	jmp halt
